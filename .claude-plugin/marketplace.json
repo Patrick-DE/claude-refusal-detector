@@ -1,0 +1,26 @@
+{
+  "name": "claude-refusal-detector-marketplace",
+  "owner": "Patrick-DE",
+  "metadata": {
+    "description": "Marketplace manifest for Claude Refusal Detector plugin."
+  },
+  "plugins": [
+    {
+      "name": "claude-refusal-detector",
+      "version": "0.1.0",
+      "description": "Automatically detects LLM safety triggers and pinpoints minimal refusal text in seconds using delta debugging.",
+      "source": "./.claude-plugin/plugin.json",
+      "path": "./.claude-plugin/plugin.json",
+      "author": {
+        "name": "Claude Refusal Detector Contributors"
+      },
+      "keywords": [
+        "refusal",
+        "safety",
+        "delta-debugging",
+        "ddmin",
+        "diagnosis"
+      ]
+    }
+  ]
+}

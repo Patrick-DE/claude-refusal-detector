@@ -33,16 +33,28 @@ prompt is blocked · `2` = execution error.
 **Call budget:** `--max-calls` limits distinct prompt evaluations. Retries of the same prompt
 (rate-limit/timeout) do not consume the budget.
 
-### Claude Plugin (primary) & MCP Engine
+### Claude Plugin & Marketplace Installation
 
-The **Claude Plugin** is the primary integration surface: it auto-detects refusals via lifecycle hooks (`.claude-plugin/plugin.json` & `.claude-plugin/hooks.json`). When a prompt is refused in Claude, the `PostInvocation` hook fires automatically and injects the recommendation report directly into the chat session.
+The repository contains a marketplace catalog manifest ([`.claude-plugin/marketplace.json`](file:///c:/Users/patri/sources/repos/claude-refusal-detector/.claude-plugin/marketplace.json)) and plugin manifest ([`.claude-plugin/plugin.json`](file:///c:/Users/patri/sources/repos/claude-refusal-detector/.claude-plugin/plugin.json)).
 
-#### Plugin Manifest & Hooks Structure
+To add this repository as a marketplace and install the plugin in Claude Code:
+
+```bash
+# Add marketplace catalog
+/plugin marketplace add Patrick-DE/claude-refusal-detector
+
+# Install refusal detector plugin
+/plugin install claude-refusal-detector
+```
+
+#### Plugin Directory Structure
 ```text
 .claude-plugin/
+├── marketplace.json  # Marketplace catalog manifest
 ├── plugin.json       # Plugin manifest
 └── hooks.json        # Refusal auto-detection lifecycle hook
 ```
+
 
 #### Standalone MCP Engine Execution
 
