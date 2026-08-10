@@ -1,0 +1,12 @@
+{
+  "refusal-detector-hook": {
+    "enabled": true,
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "python -m refusal_detector.hooks.refusal_hook",
+        "timeout": 30
+      }
+    ]
+  }
+}

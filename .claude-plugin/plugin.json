@@ -1,0 +1,16 @@
+{
+  "name": "claude-refusal-detector",
+  "version": "0.1.0",
+  "description": "Claude Plugin that automatically detects LLM safety triggers and pinpoints minimal refusal text in seconds.",
+  "author": {
+    "name": "Claude Refusal Detector Contributors"
+  },
+  "keywords": [
+    "refusal",
+    "safety",
+    "delta-debugging",
+    "ddmin",
+    "diagnosis"
+  ],
+  "hooks": "hooks.json"
+}
