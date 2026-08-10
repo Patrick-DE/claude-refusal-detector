@@ -1,9 +1,13 @@
-"""PostInvocation lifecycle hook for automatic refusal detection."""
+"""Stop-event hook: auto-detects a refusal in Claude's last reply and reports the minimal trigger."""
 
 import json
-import os
 import sys
+from pathlib import Path
 from typing import Any
+
+_SRC_ROOT = Path(__file__).resolve().parents[2]
+if str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
 
 from refusal_detector.classifier import RefusalClassifier
 from refusal_detector.logger import get_logger
@@ -13,64 +17,78 @@ logger = get_logger("refusal_hook")
 
 
 def process_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Process incoming hook stdin payload and return injectSteps if refusal detected."""
-    # Check direct user message or transcript file if provided
-    prompt_text = payload.get("userPrompt") or payload.get("prompt")
-    transcript_path = payload.get("transcriptPath")
-
-    if not prompt_text and transcript_path and os.path.exists(transcript_path):
-        prompt_text = _extract_last_user_prompt(transcript_path)
-
-    if not prompt_text:
+    """Process a Stop-event hook payload; return a systemMessage if the last reply was a refusal."""
+    transcript_path = payload.get("transcript_path")
+    if not transcript_path:
         return {}
 
-    # Check if last response indicates a refusal
-    last_response = payload.get("lastResponse") or payload.get("output", "")
+    user_prompt, assistant_reply = _extract_last_exchange(transcript_path)
+    if not user_prompt or not assistant_reply:
+        return {}
+
     classifier = RefusalClassifier()
-    verdict = classifier.classify_text(last_response)
+    verdict = classifier.classify_text(assistant_reply)
+    if not verdict.blocked:
+        return {}
 
-    # Auto-trigger detection if refused or if explicitly flagged
-    if verdict.blocked or payload.get("force_detect"):
-        logger.info("Refusal auto-detected in hook execution. Running RefusalDetector...")
-        detector = RefusalDetector()
-        report = detector.detect(prompt_text)
-        rendered = detector.render_report(report)
+    logger.info("Refusal auto-detected in Stop hook. Running RefusalDetector...")
+    detector = RefusalDetector()
+    report = detector.detect(user_prompt)
+    rendered = detector.render_report(report)
 
-        return {
-            "injectSteps": [
-                {
-                    "ephemeralMessage": rendered
-                }
-            ]
-        }
-
-    return {}
+    return {"systemMessage": rendered}
 
 
-def _extract_last_user_prompt(transcript_path: str) -> str | None:
-    """Extract last user prompt string from transcript JSONL file."""
+def _extract_last_exchange(transcript_path: str) -> tuple[str | None, str | None]:
+    """Return (last real user prompt, last assistant reply text) from a transcript JSONL file."""
+    user_prompt: str | None = None
+    assistant_reply: str | None = None
+
     try:
         with open(transcript_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
-            for line in reversed(lines):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    if data.get("type") == "USER_INPUT":
-                        content = data.get("content")
-                        if isinstance(content, str):
-                            return content
-                except json.JSONDecodeError:
-                    continue
-    except Exception as e:
+    except OSError as e:
         logger.warning("Could not read transcript file %s: %s", transcript_path, e)
-    return None
+        return None, None
+
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        message = record.get("message")
+        if not isinstance(message, dict):
+            continue
+        record_type = record.get("type")
+
+        if assistant_reply is None and record_type == "assistant":
+            content = message.get("content")
+            if isinstance(content, list):
+                text_blocks = [
+                    block.get("text", "")
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ]
+                if text_blocks:
+                    assistant_reply = "".join(text_blocks)
+
+        elif user_prompt is None and record_type == "user":
+            content = message.get("content")
+            if isinstance(content, str):
+                user_prompt = content
+
+        if user_prompt is not None and assistant_reply is not None:
+            break
+
+    return user_prompt, assistant_reply
 
 
 def main() -> None:
-    """Main CLI entry point for refusal hook execution."""
+    """CLI entry point: read the hook payload from stdin, write the hook output JSON to stdout."""
     try:
         input_data = sys.stdin.read()
         if not input_data.strip():
