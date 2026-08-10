@@ -5,12 +5,14 @@
   "author": {
     "name": "Claude Refusal Detector Contributors"
   },
+  "homepage": "https://github.com/Patrick-DE/claude-refusal-detector#readme",
+  "repository": "https://github.com/Patrick-DE/claude-refusal-detector",
+  "license": "MIT",
   "keywords": [
     "refusal",
     "safety",
     "delta-debugging",
     "ddmin",
     "diagnosis"
-  ],
-  "hooks": "hooks.json"
+  ]
 }

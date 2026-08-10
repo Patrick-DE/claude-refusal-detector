@@ -1,0 +1,18 @@
+{
+  "description": "Detects when Claude's last reply is a refusal and surfaces the minimal trigger diagnosis for the prompt that caused it.",
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/src/refusal_detector/hooks/refusal_hook.py"],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
