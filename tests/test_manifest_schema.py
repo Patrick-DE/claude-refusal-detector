@@ -30,6 +30,7 @@ def test_hooks_json_lives_at_default_discovery_path():
 def test_hooks_json_uses_wrapped_plugin_format_with_stop_event():
     hooks_config = _load_json(REPO_ROOT / "hooks" / "hooks.json")
     assert "hooks" in hooks_config, "plugin hooks.json must use the wrapped {description, hooks} format"
+    assert hooks_config.get("description"), "wrapped format's description field should be populated"
 
     stop_groups = hooks_config["hooks"]["Stop"]
     assert isinstance(stop_groups, list) and stop_groups
@@ -42,8 +43,8 @@ def test_hooks_json_uses_wrapped_plugin_format_with_stop_event():
 def test_hooks_json_stop_command_is_portable():
     hooks_config = _load_json(REPO_ROOT / "hooks" / "hooks.json")
     step = hooks_config["hooks"]["Stop"][0]["hooks"][0]
-    args = step.get("args", [])
-    assert any("${CLAUDE_PLUGIN_ROOT}" in a for a in args), "Stop hook must locate its script via ${CLAUDE_PLUGIN_ROOT}"
+    assert "args" not in step, "real hook command steps use one combined command string, not command+args"
+    assert "${CLAUDE_PLUGIN_ROOT}" in step["command"], "Stop hook must locate its script via ${CLAUDE_PLUGIN_ROOT}"
 
 
 def test_marketplace_json_owner_is_an_object_with_a_name():

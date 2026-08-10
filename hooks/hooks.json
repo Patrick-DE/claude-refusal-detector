@@ -7,8 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/src/refusal_detector/hooks/refusal_hook.py"],
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/refusal_detector/hooks/refusal_hook.py\"",
             "timeout": 30
           }
         ]
