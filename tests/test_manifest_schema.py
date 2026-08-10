@@ -64,3 +64,11 @@ def test_marketplace_json_self_hosted_plugin_source_points_at_repo_root():
     plugin_entry = marketplace["plugins"][0]
     assert plugin_entry["source"] == "./"
     assert "path" not in plugin_entry
+
+
+def test_mcp_json_registers_the_desktop_plugin_server():
+    mcp_config = _load_json(REPO_ROOT / ".mcp.json")
+    servers = mcp_config["mcpServers"]
+    assert servers, "no MCP servers registered"
+    entry = next(iter(servers.values()))
+    assert any("${CLAUDE_PLUGIN_ROOT}" in a for a in entry.get("args", []))

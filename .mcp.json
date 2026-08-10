@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "refusal-detector": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/src/refusal_detector/desktop_plugin.py"]
+    }
+  }
+}
