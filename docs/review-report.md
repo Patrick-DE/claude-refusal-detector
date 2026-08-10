@@ -148,3 +148,25 @@ install/registration instructions. Add the plugin layer; keep the MCP server as 
 
 **Files to touch for the blockers:** `src/refusal_detector/adapters.py` (+ `tests/test_adapters.py` or
 extend `tests/test_runner.py`).
+
+---
+
+## Plugin-layer re-check (2026-08-10) — `plugin-dev` validation
+
+M9 ("plugin packaging") was marked fixed above on 2026-08-10, but that check never verified the
+plugin against Claude Code's actual hook/manifest contract — it only confirmed the files existed.
+A `plugin-dev:plugin-validator` pass the same day found the plugin was a **no-op**: the hook lived
+in a disallowed location and pointed at a non-existent event (`PostInvocation`), its payload/output
+schema didn't match any real Claude Code hook contract, and `marketplace.json` had three schema
+deviations that would have broken the documented install command.
+
+| Finding | Status | Evidence |
+|---|---|---|
+| Hook unreachable (`.claude-plugin/hooks.json`, no `./` prefix, wrong dir) | Fixed | Moved to `hooks/hooks.json`; `plugin.json` relies on default discovery; `test_hooks_json_lives_at_default_discovery_path` |
+| Invalid hooks.json schema (`PostInvocation`, missing `matcher`/`hooks` wrapper) | Fixed | Rewritten as `Stop` event, wrapped format; `test_hooks_json_uses_wrapped_plugin_format_with_stop_event` |
+| Hook payload/output used invented fields | Fixed | Rewritten against the real `transcript_path`/`systemMessage` contract; `test_plugin_hook.py` |
+| `marketplace.json` schema (owner string, nested description, wrong source) | Fixed | `test_marketplace_json_*` in `test_manifest_schema.py` |
+| MCP server never registered | Fixed | `.mcp.json`; `test_mcp_json_registers_the_desktop_plugin_server` |
+| Non-portable hook command, no LICENSE, tracked bytecode | Fixed | `${CLAUDE_PLUGIN_ROOT}`-relative invocation + stdlib sys.path bootstrap; `.gitignore`; `LICENSE` |
+
+**Suite:** see `pytest -v` output after Task 4, Step 3 above for the current pass count.
