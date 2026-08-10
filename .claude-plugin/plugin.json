@@ -3,7 +3,8 @@
   "version": "0.2.0",
   "description": "Claude Plugin that automatically detects LLM safety triggers and pinpoints minimal refusal text in seconds.",
   "author": {
-    "name": "Claude Refusal Detector Contributors"
+    "name": "Patrick Eisenschmidt",
+    "url": "https://github.com/Patrick-DE"
   },
   "homepage": "https://github.com/Patrick-DE/claude-refusal-detector#readme",
   "repository": "https://github.com/Patrick-DE/claude-refusal-detector",

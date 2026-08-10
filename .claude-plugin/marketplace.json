@@ -1,20 +1,21 @@
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "claude-refusal-detector-marketplace",
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "claude-refusal-detector",
   "description": "Marketplace manifest for the Claude Refusal Detector plugin.",
   "owner": {
-    "name": "Patrick-DE",
+    "name": "Patrick Eisenschmidt",
     "url": "https://github.com/Patrick-DE"
   },
   "plugins": [
     {
       "name": "claude-refusal-detector",
-      "source": "./",
       "description": "Automatically detects LLM safety triggers and pinpoints minimal refusal text in seconds using delta debugging.",
+      "source": "./",
       "version": "0.2.0",
       "author": {
-        "name": "Claude Refusal Detector Contributors"
+        "name": "Patrick Eisenschmidt"
       },
+      "category": "productivity",
       "keywords": [
         "refusal",
         "safety",
