@@ -1,9 +1,19 @@
 """Unit tests for the Claude plugin Stop-event refusal hook."""
 
 import json
+import os
 from unittest.mock import patch
 
-from refusal_detector.hooks.refusal_hook import _extract_last_exchange, process_hook_payload
+import pytest
+
+from refusal_detector.hooks.refusal_hook import _REENTRANCY_GUARD_ENV_VAR, _extract_last_exchange, process_hook_payload
+
+
+@pytest.fixture(autouse=True)
+def _clear_reentrancy_guard():
+    os.environ.pop(_REENTRANCY_GUARD_ENV_VAR, None)
+    yield
+    os.environ.pop(_REENTRANCY_GUARD_ENV_VAR, None)
 
 
 def _write_transcript(tmp_path, records: list[dict]) -> str:

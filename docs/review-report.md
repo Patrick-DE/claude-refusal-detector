@@ -168,5 +168,6 @@ deviations that would have broken the documented install command.
 | `marketplace.json` schema (owner string, nested description, wrong source) | Fixed | `test_marketplace_json_*` in `test_manifest_schema.py` |
 | MCP server never registered | Fixed | `.mcp.json`; `test_mcp_json_registers_the_desktop_plugin_server` |
 | Non-portable hook command, no LICENSE, tracked bytecode | Fixed | `${CLAUDE_PLUGIN_ROOT}`-relative invocation + stdlib sys.path bootstrap; `.gitignore`; `LICENSE` |
+| Hook interpreter regression (`python3` doesn't resolve on this machine) + auto-trigger safety gaps | Fixed | Final whole-branch review caught `python3` failing empirically (Windows Store stub); `hooks/hooks.json` now uses `python` + 120s timeout; hook adds a reentrancy env-var guard and a capped `max_calls=10`; README documents the `pip install -e .` prerequisite |
 
-**Suite:** see `pytest -v` output after Task 4, Step 3 above for the current pass count.
+**Suite:** 44 passed, 2 skipped (confirmed after the final whole-branch review's fix wave).

@@ -1,6 +1,7 @@
 """Stop-event hook: auto-detects a refusal in Claude's last reply and reports the minimal trigger."""
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -10,14 +11,23 @@ if str(_SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(_SRC_ROOT))
 
 from refusal_detector.classifier import RefusalClassifier
-from refusal_detector.logger import get_logger
+from refusal_detector.config import Config
+from refusal_detector.logger import configure_logging, get_logger
 from refusal_detector.service import RefusalDetector
 
 logger = get_logger("refusal_hook")
 
+_REENTRANCY_GUARD_ENV_VAR = "REFUSAL_DETECTOR_HOOK_ACTIVE"
+_HOOK_MAX_CALLS = 10
+"""Deliberately smaller than Config's default (50): the auto-trigger runs inside a
+bounded hook timeout, so it trades completeness for a bounded wall-clock budget."""
+
 
 def process_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Process a Stop-event hook payload; return a systemMessage if the last reply was a refusal."""
+    if os.environ.get(_REENTRANCY_GUARD_ENV_VAR):
+        return {}
+
     transcript_path = payload.get("transcript_path")
     if not transcript_path:
         return {}
@@ -32,7 +42,9 @@ def process_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:
         return {}
 
     logger.info("Refusal auto-detected in Stop hook. Running RefusalDetector...")
-    detector = RefusalDetector()
+    os.environ[_REENTRANCY_GUARD_ENV_VAR] = "1"
+    config = Config.from_env(max_calls=_HOOK_MAX_CALLS)
+    detector = RefusalDetector(config=config)
     report = detector.detect(user_prompt)
     rendered = detector.render_report(report)
 
@@ -89,6 +101,7 @@ def _extract_last_exchange(transcript_path: str) -> tuple[str | None, str | None
 
 def main() -> None:
     """CLI entry point: read the hook payload from stdin, write the hook output JSON to stdout."""
+    configure_logging()
     try:
         input_data = sys.stdin.read()
         if not input_data.strip():

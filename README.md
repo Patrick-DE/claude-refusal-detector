@@ -51,18 +51,27 @@ To add this repository as a marketplace and install the plugin in Claude Code:
 ```text
 .claude-plugin/
 ├── marketplace.json  # Marketplace catalog manifest
-├── plugin.json       # Plugin manifest
-└── hooks.json        # Refusal auto-detection lifecycle hook
+└── plugin.json       # Plugin manifest
+hooks/
+└── hooks.json         # Refusal auto-detection Stop hook
+.mcp.json               # MCP server registration (detect_refusal_trigger)
 ```
 
 
-#### Standalone MCP Engine Execution
+#### MCP Engine
 
-The plugin embeds the **MCP server** (`detect_refusal_trigger` tool) as its underlying engine. To run the MCP server standalone over stdio:
+The plugin registers the **MCP server** (`detect_refusal_trigger` tool) via `.mcp.json`, so it starts
+automatically once the plugin is installed — it is the engine both the Stop hook and manual use call
+into. To run it standalone over stdio instead:
 
 ```bash
 python -m refusal_detector.desktop_plugin
 ```
+
+**Prerequisite:** whether run via the plugin or standalone, the hook and MCP server both need this
+package's runtime dependencies installed into the `python` Claude Code resolves on `PATH` — run
+`pip install -e .` (see Installation above) before installing the plugin. `/plugin install` does not
+run this for you.
 
 ## Docs
 - [Vision](docs/vision.md) — why we built this and what success looks like
