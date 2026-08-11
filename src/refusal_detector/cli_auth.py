@@ -43,9 +43,17 @@ def check_cli_auth(timeout: float = 30.0) -> None:
             shell=False,
         )
     except FileNotFoundError as e:
-        raise CliNotAuthenticatedError("Claude CLI binary 'claude' not found in PATH.") from e
+        raise CliNotAuthenticatedError(
+            f"Claude CLI binary 'claude' not found in PATH.\n{_SETUP_INSTRUCTIONS}"
+        ) from e
     except subprocess.TimeoutExpired as e:
-        raise CliNotAuthenticatedError(f"`claude auth status` timed out after {timeout}s") from e
+        raise CliNotAuthenticatedError(
+            f"`claude auth status` timed out after {timeout}s\n{_SETUP_INSTRUCTIONS}"
+        ) from e
+    except Exception as e:
+        raise CliNotAuthenticatedError(
+            f"Could not run `claude auth status`: {e}\n{_SETUP_INSTRUCTIONS}"
+        ) from e
 
     if result.returncode != 0:
         raise CliNotAuthenticatedError(
