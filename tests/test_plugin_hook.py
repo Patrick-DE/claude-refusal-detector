@@ -397,3 +397,89 @@ def test_generated_interruption_marker_is_never_diagnosed(tmp_path):
         process_hook_payload({"transcript_path": transcript_path})
 
         mock_detector_cls.return_value.detect.assert_called_once_with("Real content worth diagnosing.")
+
+
+def test_wall_clock_budget_can_actually_contain_the_work_it_bounds():
+    """Regression: the budget was once shorter than the work, killing every run mid-flight.
+
+    A measured `claude -p` probe takes ~12s. If the budget is under
+    _HOOK_MAX_CALLS * that, a correctly-detected refusal is terminated before it can
+    render a report — the failure is silent, since the hook still exits 0 printing {}.
+    """
+    from refusal_detector.hooks.refusal_hook import (
+        _HOOK_MAX_CALLS,
+        _HOOK_WALL_CLOCK_BUDGET_SECONDS,
+    )
+
+    measured_probe_seconds = 12.0
+    worst_case = _HOOK_MAX_CALLS * measured_probe_seconds
+
+    assert _HOOK_WALL_CLOCK_BUDGET_SECONDS > worst_case, (
+        f"budget {_HOOK_WALL_CLOCK_BUDGET_SECONDS}s cannot contain "
+        f"{_HOOK_MAX_CALLS} probes x {measured_probe_seconds}s = {worst_case}s"
+    )
+
+
+def test_watchdog_budget_stays_under_the_configured_hook_timeout():
+    """The process must self-terminate before Claude Code stops waiting, never after."""
+    import json as _json
+
+    from refusal_detector.hooks.refusal_hook import _HOOK_WALL_CLOCK_BUDGET_SECONDS
+
+    hooks_config = _json.loads(
+        (Path(__file__).resolve().parents[1] / "hooks" / "hooks.json").read_text(encoding="utf-8")
+    )
+    configured_timeout = hooks_config["hooks"]["Stop"][0]["hooks"][0]["timeout"]
+
+    assert _HOOK_WALL_CLOCK_BUDGET_SECONDS < configured_timeout, (
+        f"watchdog {_HOOK_WALL_CLOCK_BUDGET_SECONDS}s must fire before the "
+        f"{configured_timeout}s hook timeout"
+    )
+
+
+def test_oracle_probes_the_model_that_actually_refused(tmp_path):
+    """Guardrails are model-specific: probing another model finds no trigger at all."""
+    transcript_path = _write_transcript(
+        tmp_path,
+        [
+            {"type": "user", "message": {"role": "user", "content": "Audit this parser."}},
+            _refusal_fallback_record("cyber"),
+        ],
+    )
+
+    with patch("refusal_detector.hooks.refusal_hook.RefusalDetector") as mock_detector_cls:
+        mock_detector_cls.return_value.render_report.return_value = "# Report"
+
+        process_hook_payload({"transcript_path": transcript_path})
+
+        config = mock_detector_cls.call_args.kwargs["config"]
+        assert config.cli_model == "claude-fable-5", (
+            f"oracle must probe the refusing model, not {config.cli_model!r}"
+        )
+
+
+def test_claude_cli_adapter_passes_the_model_flag():
+    from unittest.mock import MagicMock
+
+    from refusal_detector.adapters import ClaudeCodeCLIAdapter
+
+    adapter = ClaudeCodeCLIAdapter(timeout=5, model="claude-fable-5")
+    with patch("refusal_detector.adapters.subprocess.run") as run:
+        run.return_value = MagicMock(returncode=0, stdout="fine", stderr="")
+        adapter.test("hello")
+
+    cmd = run.call_args.args[0]
+    assert "--model" in cmd and cmd[cmd.index("--model") + 1] == "claude-fable-5"
+
+
+def test_claude_cli_adapter_omits_model_flag_when_unset():
+    from unittest.mock import MagicMock
+
+    from refusal_detector.adapters import ClaudeCodeCLIAdapter
+
+    adapter = ClaudeCodeCLIAdapter(timeout=5)
+    with patch("refusal_detector.adapters.subprocess.run") as run:
+        run.return_value = MagicMock(returncode=0, stdout="fine", stderr="")
+        adapter.test("hello")
+
+    assert "--model" not in run.call_args.args[0]

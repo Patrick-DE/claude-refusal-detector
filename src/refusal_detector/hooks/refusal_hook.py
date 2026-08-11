@@ -33,10 +33,15 @@ stops waiting at the configured hook timeout, but the process itself would block
 `sys.stdin.read()` forever and leak. Observed in the wild as orphaned hook processes
 accumulating, one per Stop event, each holding its interpreter open indefinitely."""
 
-_HOOK_WALL_CLOCK_BUDGET_SECONDS = 110.0
-"""Slightly under the 120s timeout in hooks/hooks.json. Once Claude Code stops waiting,
+_HOOK_WALL_CLOCK_BUDGET_SECONDS = 280.0
+"""Slightly under the 300s timeout in hooks/hooks.json. Once Claude Code stops waiting,
 any work still running is unobservable but still consuming API calls, so the process
-terminates itself rather than continuing detached."""
+terminates itself rather than continuing detached.
+
+Sized against measurement, not guesswork: one `claude -p` probe takes ~12s, so the
+_HOOK_MAX_CALLS budget needs ~120s of headroom. The previous 110s budget was shorter than
+the work it was meant to contain, so a correctly-detected refusal was killed mid-run and
+produced nothing."""
 
 
 def process_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -52,32 +57,33 @@ def process_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not records:
         return {}
 
-    prompt, banner = _refused_prompt(records)
+    prompt, banner, refusing_model = _refused_prompt(records)
     if not prompt:
         return {}
 
     logger.info("Refusal auto-detected in Stop hook. Running RefusalDetector...")
     os.environ[_REENTRANCY_GUARD_ENV_VAR] = "1"
-    config = Config.from_env(max_calls=_HOOK_MAX_CALLS)
+    config = Config.from_env(max_calls=_HOOK_MAX_CALLS, cli_model=refusing_model)
     detector = RefusalDetector(config=config)
     report = detector.detect(prompt)
 
     return {"systemMessage": banner + detector.render_report(report)}
 
 
-def _refused_prompt(records: list[dict[str, Any]]) -> tuple[str | None, str]:
-    """Return the prompt to diagnose plus a banner describing how the refusal was detected.
+def _refused_prompt(records: list[dict[str, Any]]) -> tuple[str | None, str, str | None]:
+    """Return (prompt to diagnose, provenance banner, model that refused).
 
     The structured API refusal is authoritative and checked first; pattern matching on
     the assistant's prose is the lower-confidence fallback for turns that carry no
-    structured signal.
+    structured signal. The third element is the model to probe with: guardrails differ
+    per model, so replaying against a different one reports no trigger at all.
     """
     structured = _find_structured_refusal(records)
     if structured:
         origin_index = _originating_refusal_index(records, structured["index"])
         prompt = _last_user_prompt_before(records, origin_index)
         if not prompt:
-            return None, ""
+            return None, "", None
         if origin_index != structured["index"]:
             logger.info("Refusal was a retry; diagnosing the prompt that first triggered it.")
         logger.info(
@@ -85,14 +91,14 @@ def _refused_prompt(records: list[dict[str, Any]]) -> tuple[str | None, str]:
             structured.get("category"),
             structured.get("level"),
         )
-        return prompt, _render_refusal_banner(structured)
+        return prompt, _render_refusal_banner(structured), structured.get("original_model")
 
     user_prompt, assistant_reply = _extract_last_exchange_from(records)
     if not user_prompt or not assistant_reply:
-        return None, ""
+        return None, "", None
     if not RefusalClassifier().classify_text(assistant_reply).blocked:
-        return None, ""
-    return user_prompt, "> Detected via reply text pattern match (lower confidence).\n\n"
+        return None, "", None
+    return user_prompt, "> Detected via reply text pattern match (lower confidence).\n\n", None
 
 
 def _read_records(transcript_path: str) -> list[dict[str, Any]]:

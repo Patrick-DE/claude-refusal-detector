@@ -161,13 +161,18 @@ class MarkdownReporter(Reporter):
 class ClaudeCodeCLIAdapter(Oracle):
     """Keyless Oracle calling local `claude -p` CLI with shell-injection safety."""
 
-    def __init__(self, timeout: float = 30.0) -> None:
+    def __init__(self, timeout: float = 30.0, model: str | None = None) -> None:
         self.timeout = timeout
+        self.model = model
         self.classifier = RefusalClassifier()
 
     def test(self, prompt: str) -> Verdict:
 
+        # Guardrails are model-specific: probing a different model than the one that
+        # refused reports "not blocked" for a prompt that really was blocked.
         cmd = ["claude", "-p", "-"]
+        if self.model:
+            cmd += ["--model", self.model]
         try:
             # shell=False to prevent shell command injection on Windows/POSIX
             res = subprocess.run(

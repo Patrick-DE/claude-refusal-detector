@@ -28,6 +28,8 @@ class Config:
     max_calls: int = 50
     timeout_seconds: float = 30.0
     cache_file_path: str | None = None
+    cli_model: str | None = None
+    """Model alias/id for the `claude -p` oracle. None means the CLI's own default."""
     split_mode: str = "lines"
     log_level: str = "INFO"
 
@@ -109,7 +111,7 @@ def build_oracle(config: Config) -> Oracle:
 
     provider = config.provider.lower()
     if provider == "claude_cli":
-        return ClaudeCodeCLIAdapter(timeout=config.timeout_seconds)
+        return ClaudeCodeCLIAdapter(timeout=config.timeout_seconds, model=config.cli_model)
     elif provider == "anthropic":
         if not config.anthropic_api_key:
             raise ValueError("ANTHROPIC_API_KEY is required for Anthropic provider.")
