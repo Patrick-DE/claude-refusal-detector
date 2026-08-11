@@ -28,7 +28,7 @@
 2. A logged-out `claude -p` prints `Not logged in · Please run /login` and exits **1**. Confirmed.
 3. The CLI supports `--model`, `--append-system-prompt-file`, `--system-prompt-file`, `--add-dir`, `--exclude-dynamic-system-prompt-sections`. Confirmed via `claude --help`.
 4. In the captured transcript, the `model_refusal_fallback` record precedes every `tool_result` by ~84s. Content after the refusal was **not** in the refused request.
-5. `Segment` is a frozen-style dataclass in `ports.py` with exactly the six fields listed above.
+5. `Segment` is declared `@dataclass(frozen=True)` in `ports.py` with exactly the six fields listed above. Any subclass must therefore also be frozen.
 6. `RefusalClassifier.classify_text(text) -> Verdict` and `classify_moderation_error(msg) -> Verdict` exist and are pure.
 
 ---
@@ -458,9 +458,14 @@ def is_pre_prompt(origin: SegmentOrigin) -> bool:
     return origin in _PRE_PROMPT_ORIGINS
 
 
-@dataclass
+@dataclass(frozen=True)
 class ContextSegment(Segment):
-    """A Segment that remembers where it came from."""
+    """A Segment that remembers where it came from.
+
+    Must be frozen: `Segment` is `@dataclass(frozen=True)`, and Python refuses to let a
+    non-frozen dataclass inherit from a frozen one. Nothing mutates segments after
+    construction, so this costs nothing.
+    """
 
     origin: SegmentOrigin = SegmentOrigin.PROMPT
     source_label: str = ""
