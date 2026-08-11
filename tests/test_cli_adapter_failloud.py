@@ -15,7 +15,7 @@ def _run_with(returncode: int, stdout: str = "", stderr: str = ""):
 def test_not_logged_in_raises_instead_of_reporting_not_blocked():
     """The exact real-world output that silently produced false negatives."""
     adapter = ClaudeCodeCLIAdapter(timeout=5)
-    with _run_with(1, stdout="Not logged in 00b7 Please run /login\n"):
+    with _run_with(1, stdout="Not logged in \u00b7 Please run /login\n"):
         with pytest.raises(RuntimeError) as excinfo:
             adapter.test("anything")
     assert "not logged in" in str(excinfo.value).lower()
@@ -46,7 +46,7 @@ def test_successful_call_still_classifies_normally():
 def test_failure_message_is_not_double_wrapped():
     """The catch-all handler must not re-wrap a deliberately raised RuntimeError."""
     adapter = ClaudeCodeCLIAdapter(timeout=5)
-    with _run_with(1, stdout="Not logged in 00b7 Please run /login\n"):
+    with _run_with(1, stdout="Not logged in \u00b7 Please run /login\n"):
         with pytest.raises(RuntimeError) as excinfo:
             adapter.test("anything")
     message = str(excinfo.value)
