@@ -57,3 +57,80 @@ def test_real_minimizer_accepts_context_segments_and_preserves_origin():
 
     assert [s.text for s in trigger] == ["DANGEROUS_TRIGGER_LINE"]
     assert trigger[0].origin is SegmentOrigin.PROJECT_CLAUDE_MD, "origin must survive minimization"
+
+
+from refusal_detector.context import assemble_context
+
+
+def _user(text: str) -> dict:
+    return {"type": "user", "message": {"role": "user", "content": text}}
+
+
+def _tool_result(text: str) -> dict:
+    return {
+        "type": "user",
+        "message": {"role": "user", "content": [{"type": "tool_result", "content": text}]},
+    }
+
+
+def _refusal() -> dict:
+    return {"type": "system", "subtype": "model_refusal_fallback", "apiRefusalCategory": "cyber"}
+
+
+def test_content_after_the_refusal_is_excluded():
+    """The defect that motivated this redesign: later tool results were never in the
+    refused request, so including them would minimize content the model never saw."""
+    records = [
+        _user("the prompt that was refused"),
+        _refusal(),
+        _tool_result("file content that arrived AFTER the refusal"),
+    ]
+
+    segments = assemble_context(records, refusal_index=1)
+
+    joined = " ".join(s.text for s in segments)
+    assert "the prompt that was refused" in joined
+    assert "AFTER the refusal" not in joined
+
+
+def test_tool_results_before_the_refusal_are_included_and_tagged():
+    records = [
+        _user("please audit this"),
+        _tool_result("contents of a scanned file"),
+        _refusal(),
+    ]
+
+    segments = assemble_context(records, refusal_index=2)
+    origins = {s.origin for s in segments}
+
+    assert SegmentOrigin.TOOL_RESULT in origins
+    assert any("scanned file" in s.text for s in segments)
+
+
+def test_claude_md_segments_come_first_and_are_tagged():
+    records = [_user("the prompt"), _refusal()]
+    claude_md = [(SegmentOrigin.PROJECT_CLAUDE_MD, "project CLAUDE.md", "line one\nline two")]
+
+    segments = assemble_context(records, refusal_index=1, claude_md_files=claude_md)
+
+    assert segments[0].origin is SegmentOrigin.PROJECT_CLAUDE_MD
+    assert segments[0].source_label == "project CLAUDE.md"
+    assert segments[0].text == "line one"
+    assert any(s.origin is SegmentOrigin.PROMPT for s in segments)
+
+
+def test_indices_are_sequential_across_all_sources():
+    records = [_user("a\nb"), _refusal()]
+    claude_md = [(SegmentOrigin.GLOBAL_CLAUDE_MD, "global", "x\ny")]
+
+    segments = assemble_context(records, refusal_index=1, claude_md_files=claude_md)
+
+    assert [s.index for s in segments] == list(range(len(segments)))
+
+
+def test_empty_lines_are_not_emitted_as_segments():
+    records = [_user("first\n\n\nsecond"), _refusal()]
+
+    segments = assemble_context(records, refusal_index=1)
+
+    assert all(s.text.strip() for s in segments)

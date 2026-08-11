@@ -41,3 +41,94 @@ class ContextSegment(Segment):
 
     origin: SegmentOrigin = SegmentOrigin.PROMPT
     source_label: str = ""
+
+
+def _segment_lines(
+    text: str,
+    origin: SegmentOrigin,
+    source_label: str,
+    start_index: int,
+) -> list[ContextSegment]:
+    """Split one source into line segments, skipping blank lines."""
+    segments: list[ContextSegment] = []
+    char_cursor = 0
+    index = start_index
+
+    for line_number, line in enumerate(text.split("\n"), start=1):
+        line_length = len(line)
+        if line.strip():
+            segments.append(
+                ContextSegment(
+                    index=index,
+                    text=line,
+                    start_char=char_cursor,
+                    end_char=char_cursor + line_length,
+                    start_line=line_number,
+                    end_line=line_number,
+                    origin=origin,
+                    source_label=source_label,
+                )
+            )
+            index += 1
+        char_cursor += line_length + 1  # +1 for the newline consumed by split
+
+    return segments
+
+
+def _conversation_text(record: dict) -> tuple[str, SegmentOrigin] | None:
+    """Return (text, origin) for a record that contributed content to the request."""
+    message = record.get("message")
+    if not isinstance(message, dict):
+        return None
+
+    content = message.get("content")
+    record_type = record.get("type")
+
+    if isinstance(content, str):
+        if not content.strip():
+            return None
+        origin = SegmentOrigin.PROMPT if record_type == "user" else SegmentOrigin.PRIOR_TURN
+        return content, origin
+
+    if isinstance(content, list):
+        collected = []
+        origin = SegmentOrigin.PRIOR_TURN
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_result":
+                collected.append(str(block.get("content", "")))
+                origin = SegmentOrigin.TOOL_RESULT
+            elif block.get("type") == "text":
+                collected.append(str(block.get("text", "")))
+        joined = "\n".join(part for part in collected if part.strip())
+        if joined.strip():
+            return joined, origin
+
+    return None
+
+
+def assemble_context(
+    records: list[dict],
+    refusal_index: int,
+    claude_md_files: list[tuple[SegmentOrigin, str, str]] | None = None,
+) -> list[ContextSegment]:
+    """Rebuild the refused request as origin-tagged segments.
+
+    Everything at or after `refusal_index` is excluded: it had not been sent when the
+    refusal fired, so it cannot be part of what was refused.
+    """
+    segments: list[ContextSegment] = []
+
+    for origin, label, content in claude_md_files or []:
+        segments.extend(_segment_lines(content, origin, label, len(segments)))
+
+    for record in records[:refusal_index]:
+        extracted = _conversation_text(record)
+        if extracted is None:
+            continue
+        text, origin = extracted
+        label = origin.value
+        segments.extend(_segment_lines(text, origin, label, len(segments)))
+
+    return segments
