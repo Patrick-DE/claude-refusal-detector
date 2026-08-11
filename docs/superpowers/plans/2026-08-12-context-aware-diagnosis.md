@@ -17,7 +17,7 @@
 - Preserve the existing `Oracle` port exactly: `test(prompt: str) -> Verdict`. The minimizer must stay unaware of context assembly.
 - Preserve `Segment`'s existing fields (`index`, `text`, `start_char`, `end_char`, `start_line`, `end_line`). Extend by subclassing, never by editing `Segment` — `input_loader.py` and `minimizer.py` depend on its shape.
 - Fixes use patch bumps (`x.y.Z+1`), never minor. Current version is `0.3.3`.
-- All work must pass the existing suite with no regressions: `python -m pytest -q` (currently **57 passed, 2 skipped**).
+- All work must pass the existing suite with no regressions: `python -m pytest -q` (currently **60 passed, 2 skipped**).
 - Every new test must be falsified green→red→green before its task is considered done.
 - Windows/`cp1252` safety: never emit non-ASCII into strings that may be printed to a console. Use `->` not `→`.
 - A failed oracle call must **raise**, never degrade to "not blocked" (`docs/design.md` §4.4).
@@ -138,7 +138,7 @@ Temporarily revert the `raise RuntimeError(...)` to `return self.classifier.clas
 - [ ] **Step 6: Full suite**
 
 Run: `python -m pytest -q`
-Expected: 61 passed, 2 skipped (57 + 4 new).
+Expected: 64 passed, 2 skipped (60 + 4 new).
 
 - [ ] **Step 7: Commit**
 
@@ -1091,7 +1091,7 @@ Remove `"--exclude-dynamic-system-prompt-sections"` from the `cmd` list. Re-run:
 - [ ] **Step 6: Full suite**
 
 Run: `python -m pytest -q`
-Expected: 78 passed, 2 skipped.
+Expected: 87 passed, 2 skipped.
 
 - [ ] **Step 7: Commit**
 
@@ -1280,7 +1280,7 @@ Change `lines.append(f"- **{label}** - line(s) {line_numbers}")` to `lines.appen
 - [ ] **Step 6: Full suite**
 
 Run: `python -m pytest -q`
-Expected: 81 passed, 2 skipped.
+Expected: 90 passed, 2 skipped.
 
 - [ ] **Step 7: Commit**
 
