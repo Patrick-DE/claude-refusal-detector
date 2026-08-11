@@ -76,7 +76,8 @@ def test_process_hook_payload_refusal_auto_trigger(tmp_path):
 
         result = process_hook_payload(payload)
 
-        assert result == {"systemMessage": "# Auto-Trigger Diagnostic Report"}
+        assert "# Auto-Trigger Diagnostic Report" in result["systemMessage"]
+        assert "pattern match" in result["systemMessage"], "report should say how the refusal was detected"
         instance.detect.assert_called_once_with("Line 1: Safe\nLine 2: DANGEROUS_WORD payload")
 
 
@@ -198,3 +199,81 @@ def test_hook_process_exits_when_stdin_is_never_closed():
     proc.stdout.close()
     proc.stderr.close()
     proc.stdin.close()
+
+
+def _refusal_fallback_record(category: str = "cyber") -> dict:
+    """Mirrors Claude Code's real system record for an API-level refusal."""
+    return {
+        "type": "system",
+        "subtype": "model_refusal_fallback",
+        "level": "warning",
+        "apiRefusalCategory": category,
+        "apiRefusalExplanation": "This request triggered restrictions on violative content.",
+        "originalModel": "claude-fable-5",
+        "fallbackModel": "claude-opus-4-8",
+        "content": "Safeguards flagged this message. Switched to Opus 4.8",
+    }
+
+
+def test_structured_api_refusal_is_detected_without_any_assistant_text(tmp_path):
+    """The real-world case: a refused turn has no assistant prose at all, only a system record."""
+    transcript_path = _write_transcript(
+        tmp_path,
+        [
+            {"type": "user", "message": {"role": "user", "content": "Audit this parser for overflows."}},
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "x", "signature": "s"}]},
+            },
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]},
+            },
+            _refusal_fallback_record(),
+        ],
+    )
+
+    # No assistant text exists, so the pattern-matching path cannot fire.
+    assert _extract_last_exchange(transcript_path)[1] is None
+
+    with patch("refusal_detector.hooks.refusal_hook.RefusalDetector") as mock_detector_cls:
+        instance = mock_detector_cls.return_value
+        instance.render_report.return_value = "# Report"
+
+        result = process_hook_payload({"transcript_path": transcript_path})
+
+        instance.detect.assert_called_once_with("Audit this parser for overflows.")
+        assert "cyber" in result["systemMessage"]
+        assert "# Report" in result["systemMessage"]
+
+
+def test_structured_refusal_reads_prompt_that_carries_attachments(tmp_path):
+    """A prompt sent with attachments has list content; it is still the prompt to diagnose."""
+    transcript_path = _write_transcript(
+        tmp_path,
+        [
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Review the attached exploit writeup."},
+                        {"type": "image", "source": {"type": "base64", "data": "iVBOR"}},
+                    ],
+                },
+            },
+            _refusal_fallback_record("cyber"),
+        ],
+    )
+
+    with patch("refusal_detector.hooks.refusal_hook.RefusalDetector") as mock_detector_cls:
+        mock_detector_cls.return_value.render_report.return_value = "# Report"
+
+        process_hook_payload({"transcript_path": transcript_path})
+
+        mock_detector_cls.return_value.detect.assert_called_once_with("Review the attached exploit writeup.")
+
+
+def test_transcript_without_any_refusal_signal_stays_a_noop(tmp_path):
+    transcript_path = _simple_transcript(tmp_path, "hello", "Here is the answer.")
+    assert process_hook_payload({"transcript_path": transcript_path}) == {}

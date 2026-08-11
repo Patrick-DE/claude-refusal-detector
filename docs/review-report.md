@@ -206,3 +206,40 @@ realistic phrasings, five classified as refusals, including benign ones (declini
 pending input; quoting a linter about a policy rule). Each true match spawns up to
 `_HOOK_MAX_CALLS` (10) `claude -p` probes, so false positives cost real quota and session
 latency. Consider narrowing the patterns or gating the hook behind a flag file before daily use.
+
+---
+
+## Field incident (2026-08-11) — the hook could not see real refusals, fixed in 0.3.0
+
+Reported directly: a refusal warning appeared in a session and the plugin returned nothing.
+
+**Root cause:** Claude Code does not express an API-level refusal as assistant prose. It
+writes a `system` record with `subtype: "model_refusal_fallback"`, carrying
+`apiRefusalCategory`, `apiRefusalExplanation`, and the `originalModel`/`fallbackModel` pair.
+The hook only scanned assistant `text` blocks and pattern-matched them, so it saw nothing.
+In the reported session all eight assistant records held only `thinking` and `tool_use`
+blocks — zero text — so the hook bailed at its own `not assistant_reply` guard.
+
+The plugin was therefore blind to precisely the event it exists to diagnose, while remaining
+sensitive to conversational phrasing that merely resembles a refusal.
+
+A second, compounding gap: the prompt that triggered the refusal carried attachments, so its
+`message.content` was a block list rather than a string, and the extractor accepted only
+strings.
+
+| Fix | Evidence |
+|---|---|
+| `_find_structured_refusal` treats the `model_refusal_fallback` record as authoritative, checked before any pattern matching | `test_structured_api_refusal_is_detected_without_any_assistant_text` |
+| `_message_text` reads prose from block-list content, still excluding `tool_result`/`tool_use`/`thinking` | `test_structured_refusal_reads_prompt_that_carries_attachments` |
+| The report states which signal fired, so a high-confidence structured hit is distinguishable from a heuristic one | banner asserted in `test_process_hook_payload_refusal_auto_trigger` |
+| `isMeta` records skipped when resolving the prompt | `_last_user_prompt_before` |
+
+Verified against the two real transcripts that prompted the report: both now fire, both
+report category `cyber`, and both resolve the correct originating prompt. Tests falsified
+green→red→green by stubbing `_find_structured_refusal` to return `None`.
+
+**Suite:** 50 passed, 2 skipped.
+
+**Note on the reported case:** both refusals were on ordinary code-audit requests, classified
+`cyber` — false positives from the model's safeguards, which is the exact scenario this tool
+was built to diagnose.

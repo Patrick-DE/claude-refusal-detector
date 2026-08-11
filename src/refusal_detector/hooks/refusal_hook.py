@@ -23,6 +23,10 @@ _HOOK_MAX_CALLS = 10
 """Deliberately smaller than Config's default (50): the auto-trigger runs inside a
 bounded hook timeout, so it trades completeness for a bounded wall-clock budget."""
 
+_STRUCTURED_REFUSAL_SUBTYPE = "model_refusal_fallback"
+"""Claude Code's own record of an API-level refusal. It carries an explicit category and
+explanation, so it is authoritative where the text patterns are only a heuristic."""
+
 _STDIN_READ_TIMEOUT_SECONDS = 10.0
 """A hook whose stdin never reaches EOF must not outlive its invocation: Claude Code
 stops waiting at the configured hook timeout, but the process itself would block in
@@ -36,7 +40,7 @@ terminates itself rather than continuing detached."""
 
 
 def process_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Process a Stop-event hook payload; return a systemMessage if the last reply was a refusal."""
+    """Process a Stop-event hook payload; return a systemMessage if the turn was refused."""
     if os.environ.get(_REENTRANCY_GUARD_ENV_VAR):
         return {}
 
@@ -44,38 +48,58 @@ def process_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not transcript_path:
         return {}
 
-    user_prompt, assistant_reply = _extract_last_exchange(transcript_path)
-    if not user_prompt or not assistant_reply:
+    records = _read_records(transcript_path)
+    if not records:
         return {}
 
-    classifier = RefusalClassifier()
-    verdict = classifier.classify_text(assistant_reply)
-    if not verdict.blocked:
+    prompt, banner = _refused_prompt(records)
+    if not prompt:
         return {}
 
     logger.info("Refusal auto-detected in Stop hook. Running RefusalDetector...")
     os.environ[_REENTRANCY_GUARD_ENV_VAR] = "1"
     config = Config.from_env(max_calls=_HOOK_MAX_CALLS)
     detector = RefusalDetector(config=config)
-    report = detector.detect(user_prompt)
-    rendered = detector.render_report(report)
+    report = detector.detect(prompt)
 
-    return {"systemMessage": rendered}
+    return {"systemMessage": banner + detector.render_report(report)}
 
 
-def _extract_last_exchange(transcript_path: str) -> tuple[str | None, str | None]:
-    """Return (last real user prompt, last assistant reply text) from a transcript JSONL file."""
-    user_prompt: str | None = None
-    assistant_reply: str | None = None
+def _refused_prompt(records: list[dict[str, Any]]) -> tuple[str | None, str]:
+    """Return the prompt to diagnose plus a banner describing how the refusal was detected.
 
+    The structured API refusal is authoritative and checked first; pattern matching on
+    the assistant's prose is the lower-confidence fallback for turns that carry no
+    structured signal.
+    """
+    structured = _find_structured_refusal(records)
+    if structured:
+        prompt = _last_user_prompt_before(records, structured["index"])
+        if not prompt:
+            return None, ""
+        category = structured.get("category") or "unspecified"
+        logger.info("Structured API refusal detected (category=%s).", category)
+        return prompt, f"> Detected via Claude Code's API refusal signal (category: `{category}`).\n\n"
+
+    user_prompt, assistant_reply = _extract_last_exchange_from(records)
+    if not user_prompt or not assistant_reply:
+        return None, ""
+    if not RefusalClassifier().classify_text(assistant_reply).blocked:
+        return None, ""
+    return user_prompt, "> Detected via reply text pattern match (lower confidence).\n\n"
+
+
+def _read_records(transcript_path: str) -> list[dict[str, Any]]:
+    """Parse a transcript JSONL file into records, skipping unparseable lines."""
     try:
         with open(transcript_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
     except OSError as e:
         logger.warning("Could not read transcript file %s: %s", transcript_path, e)
-        return None, None
+        return []
 
-    for line in reversed(lines):
+    records: list[dict[str, Any]] = []
+    for line in lines:
         line = line.strip()
         if not line:
             continue
@@ -83,30 +107,87 @@ def _extract_last_exchange(transcript_path: str) -> tuple[str | None, str | None
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
 
+
+def _message_text(content: Any) -> str | None:
+    """Extract human/assistant prose from a message body, ignoring non-text blocks.
+
+    Content is a plain string for simple turns and a block list when the turn carries
+    attachments, thinking, or tool traffic. Only `text` blocks are prose: `tool_result`,
+    `tool_use`, and `thinking` blocks are deliberately excluded.
+    """
+    if isinstance(content, str):
+        return content or None
+    if isinstance(content, list):
+        parts = [
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        joined = "".join(parts)
+        return joined or None
+    return None
+
+
+def _find_structured_refusal(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the last API-level refusal record, the highest-confidence signal available.
+
+    Claude Code records a real refusal as a `system` record carrying an explicit
+    category and explanation — not as assistant prose — so this beats pattern matching
+    on the reply text and is checked first.
+    """
+    for index in range(len(records) - 1, -1, -1):
+        record = records[index]
+        if record.get("type") == "system" and record.get("subtype") == _STRUCTURED_REFUSAL_SUBTYPE:
+            return {
+                "index": index,
+                "category": record.get("apiRefusalCategory"),
+                "explanation": record.get("apiRefusalExplanation") or record.get("content"),
+            }
+    return None
+
+
+def _last_user_prompt_before(records: list[dict[str, Any]], index: int) -> str | None:
+    """Return the prose of the last user turn occurring before `index`."""
+    for record in reversed(records[:index]):
+        if record.get("type") != "user":
+            continue
+        if record.get("isMeta"):
+            continue
         message = record.get("message")
         if not isinstance(message, dict):
             continue
-        record_type = record.get("type")
+        text = _message_text(message.get("content"))
+        if text:
+            return text
+    return None
 
-        if assistant_reply is None and record_type == "assistant":
-            content = message.get("content")
-            if isinstance(content, list):
-                text_blocks = [
-                    block.get("text", "")
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                ]
-                if text_blocks:
-                    assistant_reply = "".join(text_blocks)
 
-        elif user_prompt is None and record_type == "user":
-            content = message.get("content")
-            if isinstance(content, str):
-                user_prompt = content
+def _extract_last_exchange(transcript_path: str) -> tuple[str | None, str | None]:
+    """Return (last real user prompt, last assistant reply text) from a transcript JSONL file."""
+    return _extract_last_exchange_from(_read_records(transcript_path))
 
-        if user_prompt is not None and assistant_reply is not None:
-            break
+
+def _extract_last_exchange_from(records: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    """Return (last real user prompt, last assistant reply text) from parsed records."""
+    user_prompt = _last_user_prompt_before(records, len(records))
+
+    assistant_reply: str | None = None
+    for record in reversed(records):
+        if record.get("type") != "assistant":
+            continue
+        message = record.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            text = _message_text(content)
+            if text:
+                assistant_reply = text
+                break
 
     return user_prompt, assistant_reply
 
