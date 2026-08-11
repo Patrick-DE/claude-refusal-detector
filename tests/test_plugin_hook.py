@@ -317,3 +317,83 @@ def test_structured_refusal_banner_tolerates_absent_optional_fields(tmp_path):
 
     assert "unspecified" in message
     assert "None" not in message, "absent fields must not leak Python None into the report"
+
+
+def _turn(prompt_id: str, text: str) -> dict:
+    return {"type": "user", "promptId": prompt_id, "message": {"role": "user", "content": text}}
+
+
+def _interrupted(prompt_id: str) -> dict:
+    return {
+        "type": "user",
+        "promptId": prompt_id,
+        "message": {"role": "user", "content": [{"type": "text", "text": "[Request interrupted by user]"}]},
+    }
+
+
+def test_retry_diagnoses_the_prompt_that_first_triggered_the_refusal(tmp_path):
+    """Clicking retry creates a turn whose only content is the retry click itself."""
+    transcript_path = _write_transcript(
+        tmp_path,
+        [
+            _turn("turn-1", "Audit this parser for buffer overflows and write it up."),
+            _refusal_fallback_record("cyber"),
+            _interrupted("turn-1"),
+            _turn("turn-2", "Erneut versuchen"),
+            _refusal_fallback_record("cyber"),
+            _interrupted("turn-2"),
+        ],
+    )
+
+    with patch("refusal_detector.hooks.refusal_hook.RefusalDetector") as mock_detector_cls:
+        mock_detector_cls.return_value.render_report.return_value = "# Report"
+
+        process_hook_payload({"transcript_path": transcript_path})
+
+        mock_detector_cls.return_value.detect.assert_called_once_with(
+            "Audit this parser for buffer overflows and write it up."
+        )
+
+
+def test_a_new_refusal_after_successful_turns_uses_its_own_prompt(tmp_path):
+    """An earlier, unrelated refusal must not hijack a fresh one."""
+    transcript_path = _write_transcript(
+        tmp_path,
+        [
+            _turn("turn-1", "An old request that was refused long ago."),
+            _refusal_fallback_record("cyber"),
+            _turn("turn-2", "Something entirely benign."),
+            {
+                "type": "assistant",
+                "promptId": "turn-2",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "Sure, done."}]},
+            },
+            _turn("turn-3", "A brand new request that got refused."),
+            _refusal_fallback_record("cyber"),
+        ],
+    )
+
+    with patch("refusal_detector.hooks.refusal_hook.RefusalDetector") as mock_detector_cls:
+        mock_detector_cls.return_value.render_report.return_value = "# Report"
+
+        process_hook_payload({"transcript_path": transcript_path})
+
+        mock_detector_cls.return_value.detect.assert_called_once_with("A brand new request that got refused.")
+
+
+def test_generated_interruption_marker_is_never_diagnosed(tmp_path):
+    transcript_path = _write_transcript(
+        tmp_path,
+        [
+            _turn("turn-1", "Real content worth diagnosing."),
+            _interrupted("turn-1"),
+            _refusal_fallback_record("cyber"),
+        ],
+    )
+
+    with patch("refusal_detector.hooks.refusal_hook.RefusalDetector") as mock_detector_cls:
+        mock_detector_cls.return_value.render_report.return_value = "# Report"
+
+        process_hook_payload({"transcript_path": transcript_path})
+
+        mock_detector_cls.return_value.detect.assert_called_once_with("Real content worth diagnosing.")

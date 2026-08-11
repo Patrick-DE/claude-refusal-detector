@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-refusal-detector"
-version = "0.3.1"
+version = "0.3.2"
 description = "Pinpoint minimal prompt triggers causing Claude or LLM refusals using delta debugging."
 readme = "README.md"
 requires-python = ">=3.10"

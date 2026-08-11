@@ -74,9 +74,12 @@ def _refused_prompt(records: list[dict[str, Any]]) -> tuple[str | None, str]:
     """
     structured = _find_structured_refusal(records)
     if structured:
-        prompt = _last_user_prompt_before(records, structured["index"])
+        origin_index = _originating_refusal_index(records, structured["index"])
+        prompt = _last_user_prompt_before(records, origin_index)
         if not prompt:
             return None, ""
+        if origin_index != structured["index"]:
+            logger.info("Refusal was a retry; diagnosing the prompt that first triggered it.")
         logger.info(
             "Structured API refusal detected (category=%s, level=%s).",
             structured.get("category"),
@@ -184,8 +187,17 @@ def _render_refusal_banner(structured: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_GENERATED_USER_MARKERS = ("[Request interrupted by user", "[Request interrupted")
+"""Claude Code writes these into the user channel itself; they are not typed content."""
+
+
+def _is_generated_marker(text: str) -> bool:
+    stripped = text.strip()
+    return any(stripped.startswith(marker) for marker in _GENERATED_USER_MARKERS)
+
+
 def _last_user_prompt_before(records: list[dict[str, Any]], index: int) -> str | None:
-    """Return the prose of the last user turn occurring before `index`."""
+    """Return the prose of the last genuine user turn occurring before `index`."""
     for record in reversed(records[:index]):
         if record.get("type") != "user":
             continue
@@ -195,9 +207,69 @@ def _last_user_prompt_before(records: list[dict[str, Any]], index: int) -> str |
         if not isinstance(message, dict):
             continue
         text = _message_text(message.get("content"))
-        if text:
+        if text and not _is_generated_marker(text):
             return text
     return None
+
+
+def _turn_ids(records: list[dict[str, Any]]) -> list[str | None]:
+    """Map each record to its conversation turn, carrying `promptId` forward.
+
+    A turn is one user submission plus everything it produced. Records that carry no
+    `promptId` of their own (the refusal record among them) belong to the turn in progress.
+    """
+    turn_ids: list[str | None] = []
+    current: str | None = None
+    for record in records:
+        prompt_id = record.get("promptId")
+        if prompt_id:
+            current = prompt_id
+        turn_ids.append(current)
+    return turn_ids
+
+
+def _originating_refusal_index(records: list[dict[str, Any]], refusal_index: int) -> int:
+    """Walk back past retries to the refusal that first rejected this content.
+
+    Clicking retry re-sends the same conversation, so it produces a fresh turn whose only
+    real content is the retry action itself ("Erneut versuchen", localized per user).
+    Consecutive refused turns therefore mean a retry of the same material, and the prompt
+    worth diagnosing belongs to the first turn in that run. A refused turn preceded by a
+    turn that was *not* refused is genuinely new content and stops the walk.
+    """
+    turn_ids = _turn_ids(records)
+    refused_turns = {
+        turn_ids[i]
+        for i, record in enumerate(records)
+        if record.get("type") == "system" and record.get("subtype") == _STRUCTURED_REFUSAL_SUBTYPE
+    }
+
+    ordered_turns: list[str | None] = []
+    for turn_id in turn_ids:
+        if not ordered_turns or ordered_turns[-1] != turn_id:
+            ordered_turns.append(turn_id)
+
+    current_turn = turn_ids[refusal_index]
+    while True:
+        position = ordered_turns.index(current_turn)
+        if position == 0:
+            break
+        previous_turn = ordered_turns[position - 1]
+        if previous_turn not in refused_turns:
+            break
+        current_turn = previous_turn
+
+    if current_turn == turn_ids[refusal_index]:
+        return refusal_index
+
+    for i, record in enumerate(records):
+        if (
+            turn_ids[i] == current_turn
+            and record.get("type") == "system"
+            and record.get("subtype") == _STRUCTURED_REFUSAL_SUBTYPE
+        ):
+            return i
+    return refusal_index
 
 
 def _extract_last_exchange(transcript_path: str) -> tuple[str | None, str | None]:
