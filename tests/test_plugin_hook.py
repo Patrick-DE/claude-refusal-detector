@@ -277,3 +277,43 @@ def test_structured_refusal_reads_prompt_that_carries_attachments(tmp_path):
 def test_transcript_without_any_refusal_signal_stays_a_noop(tmp_path):
     transcript_path = _simple_transcript(tmp_path, "hello", "Here is the answer.")
     assert process_hook_payload({"transcript_path": transcript_path}) == {}
+
+
+def test_structured_refusal_banner_surfaces_every_provider_field(tmp_path):
+    """The provider's own fields are the most trustworthy output; none may be dropped."""
+    transcript_path = _write_transcript(
+        tmp_path,
+        [
+            {"type": "user", "message": {"role": "user", "content": "Audit this parser."}},
+            _refusal_fallback_record("cyber"),
+        ],
+    )
+
+    with patch("refusal_detector.hooks.refusal_hook.RefusalDetector") as mock_detector_cls:
+        mock_detector_cls.return_value.render_report.return_value = "# Report"
+
+        message = process_hook_payload({"transcript_path": transcript_path})["systemMessage"]
+
+    assert "model_refusal_fallback" in message, "subtype missing"
+    assert "warning" in message, "level missing"
+    assert "cyber" in message, "apiRefusalCategory missing"
+    assert "restrictions on violative content" in message, "apiRefusalExplanation missing"
+    assert "claude-fable-5" in message and "claude-opus-4-8" in message, "model fallback missing"
+    assert "# Report" in message, "diagnostic report missing"
+
+
+def test_structured_refusal_banner_tolerates_absent_optional_fields(tmp_path):
+    """A record missing the optional fields must still report, not crash or print 'None'."""
+    bare = {"type": "system", "subtype": "model_refusal_fallback"}
+    transcript_path = _write_transcript(
+        tmp_path,
+        [{"type": "user", "message": {"role": "user", "content": "Audit this."}}, bare],
+    )
+
+    with patch("refusal_detector.hooks.refusal_hook.RefusalDetector") as mock_detector_cls:
+        mock_detector_cls.return_value.render_report.return_value = "# Report"
+
+        message = process_hook_payload({"transcript_path": transcript_path})["systemMessage"]
+
+    assert "unspecified" in message
+    assert "None" not in message, "absent fields must not leak Python None into the report"

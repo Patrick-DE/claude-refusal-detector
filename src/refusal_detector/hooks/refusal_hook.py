@@ -77,9 +77,12 @@ def _refused_prompt(records: list[dict[str, Any]]) -> tuple[str | None, str]:
         prompt = _last_user_prompt_before(records, structured["index"])
         if not prompt:
             return None, ""
-        category = structured.get("category") or "unspecified"
-        logger.info("Structured API refusal detected (category=%s).", category)
-        return prompt, f"> Detected via Claude Code's API refusal signal (category: `{category}`).\n\n"
+        logger.info(
+            "Structured API refusal detected (category=%s, level=%s).",
+            structured.get("category"),
+            structured.get("level"),
+        )
+        return prompt, _render_refusal_banner(structured)
 
     user_prompt, assistant_reply = _extract_last_exchange_from(records)
     if not user_prompt or not assistant_reply:
@@ -138,16 +141,47 @@ def _find_structured_refusal(records: list[dict[str, Any]]) -> dict[str, Any] | 
     Claude Code records a real refusal as a `system` record carrying an explicit
     category and explanation — not as assistant prose — so this beats pattern matching
     on the reply text and is checked first.
+
+    Matching is on `subtype` alone. `level` is captured and reported but deliberately not
+    required: a future severity change would otherwise turn every refusal into a silent miss,
+    and the subtype is already unambiguous.
     """
     for index in range(len(records) - 1, -1, -1):
         record = records[index]
         if record.get("type") == "system" and record.get("subtype") == _STRUCTURED_REFUSAL_SUBTYPE:
             return {
                 "index": index,
+                "subtype": record.get("subtype"),
+                "level": record.get("level"),
                 "category": record.get("apiRefusalCategory"),
                 "explanation": record.get("apiRefusalExplanation") or record.get("content"),
+                "original_model": record.get("originalModel"),
+                "fallback_model": record.get("fallbackModel"),
             }
     return None
+
+
+def _render_refusal_banner(structured: dict[str, Any]) -> str:
+    """Render the API refusal's structured fields above the diagnostic report.
+
+    These come from the provider rather than from this tool's own inference, so they are
+    the most trustworthy part of the output and belong in any bug report filed from it.
+    """
+    lines = ["## API Refusal Signal", ""]
+    lines.append(f"- **Subtype:** `{structured.get('subtype') or 'unknown'}`")
+    lines.append(f"- **Level:** `{structured.get('level') or 'unspecified'}`")
+    lines.append(f"- **Category:** `{structured.get('category') or 'unspecified'}`")
+
+    explanation = structured.get("explanation")
+    if explanation:
+        lines.append(f"- **Explanation:** {' '.join(str(explanation).split())}")
+
+    original_model, fallback_model = structured.get("original_model"), structured.get("fallback_model")
+    if original_model or fallback_model:
+        lines.append(f"- **Model:** `{original_model or 'unknown'}` -> `{fallback_model or 'none'}`")
+
+    lines += ["", "_Reported by Claude Code, not inferred by this tool._", "", "---", ""]
+    return "\n".join(lines)
 
 
 def _last_user_prompt_before(records: list[dict[str, Any]], index: int) -> str | None:
