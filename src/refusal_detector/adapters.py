@@ -199,6 +199,9 @@ class ClaudeCodeCLIAdapter(Oracle):
             raise RuntimeError("Claude CLI binary 'claude' not found in PATH.")
         except subprocess.TimeoutExpired:
             raise RuntimeError(f"Claude CLI execution timed out after {self.timeout}s")
+        except RuntimeError:
+            # Already a deliberate, well-formed failure - re-wrapping would bury the message.
+            raise
         except Exception as e:
             raise RuntimeError(f"Claude CLI execution failed: {e}")
 

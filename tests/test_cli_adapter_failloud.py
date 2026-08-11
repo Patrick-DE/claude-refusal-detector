@@ -41,3 +41,14 @@ def test_successful_call_still_classifies_normally():
     with _run_with(0, stdout="Here is a perfectly ordinary answer."):
         verdict = adapter.test("anything")
     assert verdict.blocked is False
+
+
+def test_failure_message_is_not_double_wrapped():
+    """The catch-all handler must not re-wrap a deliberately raised RuntimeError."""
+    adapter = ClaudeCodeCLIAdapter(timeout=5)
+    with _run_with(1, stdout="Not logged in · Please run /login\n"):
+        with pytest.raises(RuntimeError) as excinfo:
+            adapter.test("anything")
+    message = str(excinfo.value)
+    assert message.count("Claude CLI") == 1, f"message was wrapped more than once: {message}"
+    assert "execution failed:" not in message
