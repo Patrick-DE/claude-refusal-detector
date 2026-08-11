@@ -184,8 +184,16 @@ class ClaudeCodeCLIAdapter(Oracle):
                 shell=False,
             )
             output = (res.stdout or "") + "\n" + (res.stderr or "")
-            if res.returncode != 0 and ("refus" in output.lower() or "blocked" in output.lower()):
-                return self.classifier.classify_moderation_error(output)
+            if res.returncode != 0:
+                lowered = output.lower()
+                if "refus" in lowered or "blocked" in lowered:
+                    return self.classifier.classify_moderation_error(output)
+                # Fail loud: a CLI that could not run tells us nothing about the
+                # prompt. Treating this as "not blocked" produced false negatives
+                # in the field for every diagnosis made while logged out.
+                raise RuntimeError(
+                    f"Claude CLI exited {res.returncode} without a verdict: {output.strip()[:200]}"
+                )
             return self.classifier.classify_text(output)
         except FileNotFoundError:
             raise RuntimeError("Claude CLI binary 'claude' not found in PATH.")
