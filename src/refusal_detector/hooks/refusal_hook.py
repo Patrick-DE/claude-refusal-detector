@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,17 @@ _REENTRANCY_GUARD_ENV_VAR = "REFUSAL_DETECTOR_HOOK_ACTIVE"
 _HOOK_MAX_CALLS = 10
 """Deliberately smaller than Config's default (50): the auto-trigger runs inside a
 bounded hook timeout, so it trades completeness for a bounded wall-clock budget."""
+
+_STDIN_READ_TIMEOUT_SECONDS = 10.0
+"""A hook whose stdin never reaches EOF must not outlive its invocation: Claude Code
+stops waiting at the configured hook timeout, but the process itself would block in
+`sys.stdin.read()` forever and leak. Observed in the wild as orphaned hook processes
+accumulating, one per Stop event, each holding its interpreter open indefinitely."""
+
+_HOOK_WALL_CLOCK_BUDGET_SECONDS = 110.0
+"""Slightly under the 120s timeout in hooks/hooks.json. Once Claude Code stops waiting,
+any work still running is unobservable but still consuming API calls, so the process
+terminates itself rather than continuing detached."""
 
 
 def process_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -99,11 +111,52 @@ def _extract_last_exchange(transcript_path: str) -> tuple[str | None, str | None
     return user_prompt, assistant_reply
 
 
+def read_hook_payload(stream: Any = None, timeout: float = _STDIN_READ_TIMEOUT_SECONDS) -> str:
+    """Read the hook payload, returning "" rather than blocking forever without EOF.
+
+    The read runs on a daemon thread so a stream that never closes cannot keep the
+    interpreter alive past `timeout`.
+    """
+    stream = sys.stdin if stream is None else stream
+    if stream is None:
+        return ""
+    try:
+        if stream.isatty():
+            return ""
+    except (AttributeError, ValueError):
+        pass
+
+    captured: list[str] = []
+    reader = threading.Thread(target=lambda: captured.append(stream.read()), daemon=True)
+    reader.start()
+    reader.join(timeout)
+
+    if not captured:
+        logger.warning("No hook payload on stdin after %.0fs; exiting without work.", timeout)
+        return ""
+    return captured[0]
+
+
+def _start_wall_clock_watchdog(budget: float = _HOOK_WALL_CLOCK_BUDGET_SECONDS) -> threading.Timer:
+    """Hard-stop the process once Claude Code has stopped waiting for this hook."""
+
+    def _expire() -> None:
+        logger.error("Hook exceeded its %.0fs budget; terminating instead of running detached.", budget)
+        sys.stderr.flush()
+        os._exit(0)
+
+    watchdog = threading.Timer(budget, _expire)
+    watchdog.daemon = True
+    watchdog.start()
+    return watchdog
+
+
 def main() -> None:
     """CLI entry point: read the hook payload from stdin, write the hook output JSON to stdout."""
     configure_logging()
+    watchdog = _start_wall_clock_watchdog()
     try:
-        input_data = sys.stdin.read()
+        input_data = read_hook_payload()
         if not input_data.strip():
             print("{}")
             return
@@ -114,6 +167,8 @@ def main() -> None:
     except Exception as e:
         logger.error("Error running refusal hook: %s", e)
         print("{}")
+    finally:
+        watchdog.cancel()
 
 
 if __name__ == "__main__":

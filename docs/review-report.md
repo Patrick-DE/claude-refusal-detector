@@ -171,3 +171,38 @@ deviations that would have broken the documented install command.
 | Hook interpreter regression (`python3` doesn't resolve on this machine) + auto-trigger safety gaps | Fixed | Final whole-branch review caught `python3` failing empirically (Windows Store stub); `hooks/hooks.json` now uses `python` + 120s timeout; hook adds a reentrancy env-var guard and a capped `max_calls=10`; README documents the `pip install -e .` prerequisite |
 
 **Suite:** 44 passed, 2 skipped (confirmed after the final whole-branch review's fix wave).
+
+---
+
+## Field incident (2026-08-11) — orphaned hook processes, fixed in 0.2.1
+
+Reported from a live session shortly after 0.2.0 shipped. Three `refusal_hook.py` processes
+were found running concurrently, the oldest for ~18 minutes, despite the hook's 120s timeout.
+
+**Root cause:** `main()` called `sys.stdin.read()`, which blocks forever when stdin never
+reaches EOF. Claude Code stops *waiting* at the hook timeout, but does not guarantee the
+process dies — so each affected Stop event leaked one blocked interpreter (~62 MB), and they
+accumulated. The bug predates 0.2.0 (the original hook had the same `main()`), but was
+unreachable until 0.2.0 made the hook actually fire.
+
+**Not affected:** no API quota was consumed. The processes blocked *before* the classifier,
+so detection never ran and no `claude -p` probes were spawned. Scanning every assistant
+message across two hours of transcripts produced zero refusal classifications, confirming
+the leak was independent of refusal content.
+
+| Fix | Evidence |
+|---|---|
+| `read_hook_payload()` reads on a daemon thread with a 10s timeout, and short-circuits on a tty | `test_read_hook_payload_gives_up_when_stdin_never_reaches_eof`, `test_read_hook_payload_returns_piped_input` |
+| Wall-clock watchdog (110s, under the hook's 120s) hard-exits rather than running detached | `_start_wall_clock_watchdog` |
+| Process-level regression test holding stdin open | `test_hook_process_exits_when_stdin_is_never_closed` — uses `proc.wait()`, never `communicate()`, which would close stdin and pass regardless |
+
+Both new tests were falsified green→red→green by reverting `reader.join(timeout)` to a
+blocking `reader.join()`.
+
+**Suite:** 47 passed, 2 skipped.
+
+**Known limitation (unfixed):** the text-pattern classifier is broad. Measured against eight
+realistic phrasings, five classified as refusals, including benign ones (declining to proceed
+pending input; quoting a linter about a policy rule). Each true match spawns up to
+`_HOOK_MAX_CALLS` (10) `claude -p` probes, so false positives cost real quota and session
+latency. Consider narrowing the patterns or gating the hook behind a flag file before daily use.

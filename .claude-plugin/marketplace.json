@@ -11,7 +11,7 @@
       "name": "claude-refusal-detector",
       "description": "Automatically detects LLM safety triggers and pinpoints minimal refusal text in seconds using delta debugging.",
       "source": "./",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "author": {
         "name": "Patrick Eisenschmidt"
       },
