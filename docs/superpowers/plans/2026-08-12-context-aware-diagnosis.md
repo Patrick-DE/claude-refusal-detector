@@ -227,10 +227,18 @@ def test_unparseable_status_raises_rather_than_assuming_success():
             check_cli_auth()
 
 
-def test_status_command_failure_raises():
-    with _status("", returncode=1):
-        with pytest.raises(CliNotAuthenticatedError):
+def test_status_command_failure_raises_with_setup_instructions():
+    """The branch a real logged-out CLI actually takes: exit 1, plus logged-out JSON.
+
+    Observed on this machine: `claude auth status` exits 1 when logged out while still
+    printing valid loggedIn:false JSON, so this - not the JSON-parse branch - is the
+    path that fires in practice. Asserting only "it raised" would let a regression that
+    stripped the instructions pass green.
+    """
+    with _status('{"loggedIn": false, "authMethod": "none"}', returncode=1):
+        with pytest.raises(CliNotAuthenticatedError) as excinfo:
             check_cli_auth()
+    assert "claude setup-token" in str(excinfo.value)
 
 
 def test_noise_before_the_json_is_tolerated():
@@ -295,9 +303,21 @@ def check_cli_auth(timeout: float = 30.0) -> None:
             shell=False,
         )
     except FileNotFoundError as e:
-        raise CliNotAuthenticatedError("Claude CLI binary 'claude' not found in PATH.") from e
+        raise CliNotAuthenticatedError(
+            f"Claude CLI binary 'claude' not found in PATH.
+{_SETUP_INSTRUCTIONS}"
+        ) from e
     except subprocess.TimeoutExpired as e:
-        raise CliNotAuthenticatedError(f"`claude auth status` timed out after {timeout}s") from e
+        raise CliNotAuthenticatedError(
+            f"`claude auth status` timed out after {timeout}s
+{_SETUP_INSTRUCTIONS}"
+        ) from e
+    except Exception as e:
+        # Task 5 catches CliNotAuthenticatedError; a raw OSError would escape it.
+        raise CliNotAuthenticatedError(
+            f"Could not run `claude auth status`: {e}
+{_SETUP_INSTRUCTIONS}"
+        ) from e
 
     if result.returncode != 0:
         raise CliNotAuthenticatedError(
@@ -322,7 +342,7 @@ def check_cli_auth(timeout: float = 30.0) -> None:
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `python -m pytest tests/test_cli_auth.py -v`
-Expected: 5 passed.
+Expected: 8 passed.
 
 - [ ] **Step 5: Falsify**
 
