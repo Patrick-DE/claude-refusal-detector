@@ -126,10 +126,37 @@ Replace with:
             return self.classifier.classify_text(output)
 ```
 
+Then add a pass-through clause immediately **before** the existing `except Exception as e:` handler
+at the end of the same method. Without it the catch-all re-wraps the message above into
+`Claude CLI execution failed: Claude CLI exited 1 without a verdict: ...` — the tests still pass,
+because the substring survives, which is exactly why this needs stating:
+
+```python
+        except RuntimeError:
+            # Already a deliberate, well-formed failure - re-wrapping would bury the message.
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Claude CLI execution failed: {e}")
+```
+
+Add the test that would have caught it:
+
+```python
+def test_failure_message_is_not_double_wrapped():
+    """The catch-all handler must not re-wrap a deliberately raised RuntimeError."""
+    adapter = ClaudeCodeCLIAdapter(timeout=5)
+    with _run_with(1, stdout="Not logged in · Please run /login\n"):
+        with pytest.raises(RuntimeError) as excinfo:
+            adapter.test("anything")
+    message = str(excinfo.value)
+    assert message.count("Claude CLI") == 1, f"message was wrapped more than once: {message}"
+    assert "execution failed:" not in message
+```
+
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `python -m pytest tests/test_cli_adapter_failloud.py -v`
-Expected: 4 passed.
+Expected: 5 passed.
 
 - [ ] **Step 5: Falsify**
 
@@ -138,7 +165,7 @@ Temporarily revert the `raise RuntimeError(...)` to `return self.classifier.clas
 - [ ] **Step 6: Full suite**
 
 Run: `python -m pytest -q`
-Expected: 64 passed, 2 skipped (60 + 4 new).
+Expected: 65 passed, 2 skipped (60 + 5 new).
 
 - [ ] **Step 7: Commit**
 
@@ -1091,7 +1118,7 @@ Remove `"--exclude-dynamic-system-prompt-sections"` from the `cmd` list. Re-run:
 - [ ] **Step 6: Full suite**
 
 Run: `python -m pytest -q`
-Expected: 87 passed, 2 skipped.
+Expected: 88 passed, 2 skipped.
 
 - [ ] **Step 7: Commit**
 
@@ -1280,7 +1307,7 @@ Change `lines.append(f"- **{label}** - line(s) {line_numbers}")` to `lines.appen
 - [ ] **Step 6: Full suite**
 
 Run: `python -m pytest -q`
-Expected: 90 passed, 2 skipped.
+Expected: 91 passed, 2 skipped.
 
 - [ ] **Step 7: Commit**
 
