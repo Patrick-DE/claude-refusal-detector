@@ -74,3 +74,20 @@ def test_auth_failure_propagates_rather_than_becoming_not_blocked():
 
     with pytest.raises(CliNotAuthenticatedError):
         _oracle(segments, adapter=adapter).test("prompt line")
+
+
+def test_resolve_adapter_builds_the_real_system_prompt_adapter():
+    """Prove the seam: Task 5's lazy import must resolve Task 6's real module.
+
+    Every other test here injects a mock, so without this the join is unproven -
+    a rename or signature change would break wiring with the suite still green.
+    Constructing the adapter makes no CLI call, so this is safe while logged out.
+    """
+    from refusal_detector.system_prompt_adapter import SystemPromptCLIAdapter
+
+    oracle = ContextOracle(segments=[], model="claude-fable-5", timeout=99.0)
+    adapter = oracle._resolve_adapter()
+
+    assert isinstance(adapter, SystemPromptCLIAdapter)
+    assert adapter.model == "claude-fable-5", "model must reach the adapter"
+    assert adapter.timeout == 99.0, "timeout must reach the adapter"
