@@ -896,11 +896,23 @@ class ContextOracle:
         self._segments = segments
         self._model = model
         self._timeout = timeout
-        if adapter is None:
+        self._adapter = adapter
+
+    def _resolve_adapter(self):
+        """Construct the default adapter on first actual use, not at construction time.
+
+        build_channels() is a pure function of `subset` and never touches the adapter,
+        so callers that only assemble channels must not pay for (or require) Task 6's
+        SystemPromptCLIAdapter. The import stays lazy relative to test(), the method
+        that actually needs it. (Constructing it eagerly in __init__ broke the two
+        Step 1 tests that only call build_channels() and never pass an adapter, since
+        `refusal_detector.system_prompt_adapter` does not exist until Task 6.)
+        """
+        if self._adapter is None:
             from refusal_detector.system_prompt_adapter import SystemPromptCLIAdapter
 
-            adapter = SystemPromptCLIAdapter(timeout=timeout, model=model)
-        self._adapter = adapter
+            self._adapter = SystemPromptCLIAdapter(timeout=self._timeout, model=self._model)
+        return self._adapter
 
     def build_channels(self, subset: list[ContextSegment]) -> tuple[str, str]:
         """Split a candidate subset into (system prompt text, conversation text)."""
@@ -927,7 +939,8 @@ class ContextOracle:
             sum(1 for s in subset if is_pre_prompt(s.origin)),
             sum(1 for s in subset if not is_pre_prompt(s.origin)),
         )
-        return self._adapter.test_with_system(prompt=conversation, system_prompt=system_prompt)
+        adapter = self._resolve_adapter()
+        return adapter.test_with_system(prompt=conversation, system_prompt=system_prompt)
 ```
 
 - [ ] **Step 4: Run to verify they pass**
