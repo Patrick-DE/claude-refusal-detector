@@ -344,6 +344,29 @@ def _start_wall_clock_watchdog(budget: float = _HOOK_WALL_CLOCK_BUDGET_SECONDS) 
     return watchdog
 
 
+def render_origin_summary(trigger_segments: list[Any]) -> str:
+    """Name the source of every trigger segment, grouped by origin.
+
+    Without this the report says which line minimized, but not which file to edit.
+    """
+    if not trigger_segments:
+        return ""
+
+    by_source: dict[str, list[Any]] = {}
+    for segment in trigger_segments:
+        label = getattr(segment, "source_label", "") or getattr(
+            getattr(segment, "origin", None), "value", "unknown"
+        )
+        by_source.setdefault(label, []).append(segment)
+
+    lines = ["## Trigger Sources", ""]
+    for label, segments in by_source.items():
+        line_numbers = ", ".join(str(getattr(s, "start_line", "?")) for s in segments)
+        lines.append(f"- **{label}** - line(s) {line_numbers}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def main() -> None:
     """CLI entry point: read the hook payload from stdin, write the hook output JSON to stdout."""
     configure_logging()

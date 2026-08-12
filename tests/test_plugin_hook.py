@@ -483,3 +483,56 @@ def test_claude_cli_adapter_omits_model_flag_when_unset():
         adapter.test("hello")
 
     assert "--model" not in run.call_args.args[0]
+
+
+def test_hook_reports_which_source_the_trigger_came_from(tmp_path):
+    """"Line 340 of your project CLAUDE.md" is actionable; "line 340" is not."""
+    from refusal_detector.context import ContextSegment, SegmentOrigin
+    from refusal_detector.hooks.refusal_hook import render_origin_summary
+
+    trigger = [
+        ContextSegment(
+            index=7,
+            text="a rule that tripped a classifier",
+            start_char=0,
+            end_char=32,
+            start_line=340,
+            end_line=340,
+            origin=SegmentOrigin.PROJECT_CLAUDE_MD,
+            source_label="project CLAUDE.md",
+        )
+    ]
+
+    summary = render_origin_summary(trigger)
+
+    assert "project CLAUDE.md" in summary
+    assert "340" in summary
+
+
+def test_origin_summary_groups_multiple_sources(tmp_path):
+    from refusal_detector.context import ContextSegment, SegmentOrigin
+    from refusal_detector.hooks.refusal_hook import render_origin_summary
+
+    trigger = [
+        ContextSegment(
+            index=1, text="from the prompt", start_char=0, end_char=15,
+            start_line=2, end_line=2,
+            origin=SegmentOrigin.PROMPT, source_label="prompt",
+        ),
+        ContextSegment(
+            index=9, text="from a claude md", start_char=0, end_char=16,
+            start_line=88, end_line=88,
+            origin=SegmentOrigin.PROJECT_CLAUDE_MD, source_label="project CLAUDE.md",
+        ),
+    ]
+
+    summary = render_origin_summary(trigger)
+
+    assert "prompt" in summary
+    assert "project CLAUDE.md" in summary
+
+
+def test_origin_summary_is_empty_when_nothing_triggered():
+    from refusal_detector.hooks.refusal_hook import render_origin_summary
+
+    assert render_origin_summary([]) == ""
