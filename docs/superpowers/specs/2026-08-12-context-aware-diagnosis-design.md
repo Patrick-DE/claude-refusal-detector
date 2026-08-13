@@ -150,16 +150,28 @@ A preflight `claude auth status` check runs once per session and fails with the
 
 ### 4.4 Cost
 
-Unknown until the CLI is authenticated — the 12.1s figure was auth-failure latency (§1.1) and
-must be re-measured before any budget is set. Structure that does not depend on the number:
+Measured 2026-08-13, post-authentication, with 3 real `claude -p` probes via
+`SystemPromptCLIAdapter`: 19.6s / 21.2s / 24.5s (mean 21.8s, max 24.5s). The earlier 12.1s
+figure (section 1.1) was auth-failure latency, not real probe cost, and is void.
+
+Budget arithmetic: `_HOOK_MAX_CALLS * max_probe_seconds * 1.3` headroom, rounded up to the
+next 10s, plus a fixed 20s margin for the hook timeout. At the previous
+`_HOOK_MAX_CALLS = 10` this needs `10 * 24.5 * 1.3 = 318.5` -> 320s budget -> 340s hook
+timeout, past the 300s ceiling a blocking Stop hook may hold a session for. 9 still does
+not fit (`9 * 24.5 * 1.3 = 286.65` -> 290s budget -> 310s timeout). `_HOOK_MAX_CALLS = 8`
+is the largest count that fits: `8 * 24.5 * 1.3 = 254.8` -> 260s budget -> 280s hook
+timeout. Completeness (2 fewer probes) is traded for a bounded stall rather than letting
+the timeout climb past 300s.
+
+Structure that does not depend on the number:
 
 - Coarse-to-fine by origin: test whole sources first (prompt / CLAUDE.md / tool results) to
   find which contains the trigger, then minimize only inside it. On the captured case this is
   ~3 probes to localize before line-level work begins.
 - The existing per-session cache and `--max-calls` budget already apply.
-- The Stop hook must not block a session for minutes. With a real per-probe cost measured,
-  either the hook stays within a bounded budget and reports partial results, or the automatic
-  surface is dropped in favour of the on-demand MCP tool. **Deferred until measured.**
+- The Stop hook stays automatic: with the measurement above it fits inside a bounded 260s
+  budget and reports whatever it found before the watchdog fires, rather than being dropped
+  in favour of an on-demand-only MCP tool.
 
 ## 5. Verification
 

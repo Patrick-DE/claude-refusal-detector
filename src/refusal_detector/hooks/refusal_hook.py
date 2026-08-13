@@ -19,9 +19,16 @@ from refusal_detector.service import RefusalDetector
 logger = get_logger("refusal_hook")
 
 _REENTRANCY_GUARD_ENV_VAR = "REFUSAL_DETECTOR_HOOK_ACTIVE"
-_HOOK_MAX_CALLS = 10
+_HOOK_MAX_CALLS = 8
 """Deliberately smaller than Config's default (50): the auto-trigger runs inside a
-bounded hook timeout, so it trades completeness for a bounded wall-clock budget."""
+bounded hook timeout, so it trades completeness for a bounded wall-clock budget.
+
+Reduced from 10 to 8 on 2026-08-13 after measuring real probe cost (mean 21.8s, max
+24.5s over 3 probes, post-authentication -- see _HOOK_WALL_CLOCK_BUDGET_SECONDS below).
+At 10 calls the arithmetic there needs a 340s hook timeout, past the 300s ceiling a
+blocking Stop hook may hold a session for; 9 still does not fit (310s). 8 is the largest
+call count whose budget fits under that ceiling, so completeness is traded for a bounded
+stall rather than letting the timeout climb past 300s."""
 
 _STRUCTURED_REFUSAL_SUBTYPE = "model_refusal_fallback"
 """Claude Code's own record of an API-level refusal. It carries an explicit category and
@@ -33,15 +40,20 @@ stops waiting at the configured hook timeout, but the process itself would block
 `sys.stdin.read()` forever and leak. Observed in the wild as orphaned hook processes
 accumulating, one per Stop event, each holding its interpreter open indefinitely."""
 
-_HOOK_WALL_CLOCK_BUDGET_SECONDS = 280.0
-"""Slightly under the 300s timeout in hooks/hooks.json. Once Claude Code stops waiting,
+_HOOK_WALL_CLOCK_BUDGET_SECONDS = 260.0
+"""Slightly under the 280s timeout in hooks/hooks.json. Once Claude Code stops waiting,
 any work still running is unobservable but still consuming API calls, so the process
 terminates itself rather than continuing detached.
 
-Sized against measurement, not guesswork: one `claude -p` probe takes ~12s, so the
-_HOOK_MAX_CALLS budget needs ~120s of headroom. The previous 110s budget was shorter than
-the work it was meant to contain, so a correctly-detected refusal was killed mid-run and
-produced nothing."""
+Sized against measurement, not guesswork. Measured 2026-08-13, post-authentication, with
+3 real `claude -p` probes: 19.6s / 21.2s / 24.5s (mean 21.8s, max 24.5s). The previous
+"~12s per probe" figure used here was never real work: it was auth-failure latency from a
+logged-out CLI rejecting every call in ~12s before ever reaching the model, so the budget
+built on it was meaningless.
+
+Budget = _HOOK_MAX_CALLS(8) * max_probe_seconds(24.5) * 1.3 headroom = 254.8s, rounded up
+to the next 10s = 260.0s. hooks/hooks.json's timeout is this value plus a 20s margin =
+280s, which stays under the 300s ceiling a blocking Stop hook may hold a session for."""
 
 
 def process_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:

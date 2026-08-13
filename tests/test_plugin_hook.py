@@ -402,16 +402,17 @@ def test_generated_interruption_marker_is_never_diagnosed(tmp_path):
 def test_wall_clock_budget_can_actually_contain_the_work_it_bounds():
     """Regression: the budget was once shorter than the work, killing every run mid-flight.
 
-    A measured `claude -p` probe takes ~12s. If the budget is under
-    _HOOK_MAX_CALLS * that, a correctly-detected refusal is terminated before it can
-    render a report — the failure is silent, since the hook still exits 0 printing {}.
+    A measured `claude -p` probe takes up to ~24.5s (3 real probes, 2026-08-13,
+    post-authentication). If the budget is under _HOOK_MAX_CALLS * that, a
+    correctly-detected refusal is terminated before it can render a report -- the
+    failure is silent, since the hook still exits 0 printing {}.
     """
     from refusal_detector.hooks.refusal_hook import (
         _HOOK_MAX_CALLS,
         _HOOK_WALL_CLOCK_BUDGET_SECONDS,
     )
 
-    measured_probe_seconds = 12.0
+    measured_probe_seconds = 24.5
     worst_case = _HOOK_MAX_CALLS * measured_probe_seconds
 
     assert _HOOK_WALL_CLOCK_BUDGET_SECONDS > worst_case, (
