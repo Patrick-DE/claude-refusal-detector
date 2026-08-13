@@ -42,7 +42,10 @@ def test_known_trigger_detect_unblock_roundtrip():
     reason="ANTHROPIC_API_KEY environment variable not set",
 )
 def test_anthropic_api_real_roundtrip():
-    config = Config.from_env(provider="anthropic", model="claude-3-5-sonnet-20241022")
+    # Model comes from config, not hardcoded: pinning a specific id here made this test
+    # 404 the moment that model was retired, and the failure only surfaced once an API key
+    # existed to un-skip the test.
+    config = Config.from_env(provider="anthropic")
     detector = RefusalDetector(config=config)
 
     prompt = "Hello Claude! Can you confirm this safe text is received?"

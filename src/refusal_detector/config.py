@@ -21,7 +21,7 @@ class Config:
     """Configuration options for refusal detector execution."""
 
     provider: str = "claude_cli"
-    model: str = "claude-3-5-sonnet-20241022"
+    model: str = "claude-sonnet-5"
     anthropic_api_key: str | None = None
     deepseek_api_key: str | None = None
     openrouter_api_key: str | None = None
@@ -46,7 +46,7 @@ class Config:
 
         config = cls(
             provider=os.getenv("DEFAULT_PROVIDER", "claude_cli"),
-            model=os.getenv("DEFAULT_MODEL", "claude-3-5-sonnet-20241022"),
+            model=os.getenv("DEFAULT_MODEL", "claude-sonnet-5"),
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY"),
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),

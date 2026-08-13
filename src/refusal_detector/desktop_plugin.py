@@ -23,7 +23,7 @@ def detect_refusal_trigger(
     prompt_or_path: str,
     split_mode: str = "lines",
     provider: str = "claude_cli",
-    model: str = "claude-3-5-sonnet-20241022",
+    model: str = "claude-sonnet-5",
 ) -> str:
     """Analyze a prompt string or file path to pinpoint the minimal subset of text triggering a refusal.
 

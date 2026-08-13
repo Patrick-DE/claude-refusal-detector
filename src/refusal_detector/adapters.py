@@ -209,7 +209,7 @@ class ClaudeCodeCLIAdapter(Oracle):
 class AnthropicAPIAdapter(Oracle):
     """Oracle adapter calling Anthropic Messages API with strict fail-loud error handling."""
 
-    def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-20241022", timeout: float = 30.0) -> None:
+    def __init__(self, api_key: str, model: str = "claude-sonnet-5", timeout: float = 30.0) -> None:
         self.api_key = api_key
         self.model = model
         self.timeout = timeout

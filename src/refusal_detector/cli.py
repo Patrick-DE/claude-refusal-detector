@@ -25,7 +25,7 @@ def main(args: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--debug", "-v", action="store_true", help="Enable verbose debug logging")
     parser.add_argument("--provider", help="Provider adapter: claude_cli, anthropic, deepseek, openrouter")
-    parser.add_argument("--model", help="Model name (e.g. claude-3-5-sonnet-20241022, deepseek-chat)")
+    parser.add_argument("--model", help="Model name (e.g. claude-sonnet-5, claude-fable-5, deepseek-chat)")
     parser.add_argument("--split", choices=["lines", "sentences", "paragraphs", "tokens"], default="lines", help="Segmentation mode")
     parser.add_argument("--max-calls", type=int, default=50, help="Maximum API call budget")
     parser.add_argument("--cache-file", help="Path to per-session JSON cache file")

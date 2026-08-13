@@ -73,6 +73,46 @@ package's runtime dependencies installed into the `python` Claude Code resolves 
 `pip install -e .` (see Installation above) before installing the plugin. `/plugin install` does not
 run this for you.
 
+### Credentials: where the key goes
+
+The oracle needs to reach a model. Where you put that credential matters, because **a `.env` in
+this repository is not read when the plugin runs.** `Config.from_env()` calls `load_dotenv()`, which
+searches the *current working directory*; a hook fires with the cwd of whatever project you were in,
+and the installed plugin runs from `~/.claude/plugins/cache/...`, not from this checkout.
+
+| Location | Plugin / Stop hook | CLI run from this repo |
+|---|---|---|
+| User-scope environment variable | yes | yes |
+| `.env` in **this** repository | **no** — never loaded | yes |
+| `.env` in the project you are working in | yes, if the cwd matches | n/a |
+
+So for plugin use, set it as a user environment variable and restart Claude Code so the value is
+inherited:
+
+```bash
+setx ANTHROPIC_API_KEY "sk-ant-..."
+```
+
+Never commit a key or paste one into a chat window. `.env` is gitignored here, but a key that has
+been pasted anywhere is already exposed — rotate it at <https://console.anthropic.com/settings/keys>.
+
+**Which provider.** `DEFAULT_PROVIDER` selects the oracle:
+
+- `anthropic` — the Messages API. **Recommended.** It returns a response to the text you send and
+  never acts on it, so a transcript containing an agent's own tool plans is diagnosed rather than
+  replayed. It also reports Anthropic's structured refusal (`stop_reason="refusal"`) instead of
+  guessing from wording. Requires `ANTHROPIC_API_KEY`.
+- `claude_cli` — keyless, uses your Claude Code subscription via `claude -p`. Convenient, but it is
+  an *agent*: given a transcript that contains instructions, it will try to carry them out instead
+  of judging them. Suitable for plain content, unsuitable for agentic transcripts.
+
+**Model.** `DEFAULT_MODEL` must be a model your account can reach — probe with the same model that
+refused you, since guardrails differ per model. List what is available to your key:
+
+```bash
+curl -s https://api.anthropic.com/v1/models -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01"
+```
+
 ## Docs
 - [Vision](docs/vision.md) — why we built this and what success looks like
 - [Design](docs/design.md) — architecture, algorithm, classification, scope
