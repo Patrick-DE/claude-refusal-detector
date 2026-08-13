@@ -151,6 +151,96 @@ git commit -m "fix: never minimize a blocked input to an empty trigger"
 
 ---
 
+### Task 1b: Carry the newline in context segments (do this before Task 2)
+
+**Files:**
+- Modify: `src/refusal_detector/context.py` (`_segment_lines`)
+- Test: `tests/test_context_assembler.py` (append)
+
+**Interfaces:**
+- Consumes: `assemble_context(records, refusal_index, claude_md_files=None)` (unchanged signature).
+- Produces: `ContextSegment.text` ends with `"\n"` for every line except the last of a source, matching `LineSegmenter`'s existing convention, so `_join_segments`' `"".join` reconstructs real text.
+
+**Why this is urgent.** `minimizer._join_segments` is `"".join(s.text for s in segments)`. `LineSegmenter` keeps the trailing newline in `.text`, so that reconstructs correctly. `_segment_lines` strips it, so joining produced `'alphabeta'` from `'alpha'` and `'beta'` — verified directly. Every ddmin probe in the 2026-08-13 run therefore classified text with all 87 lines run together, which is why `minimize` internally saw "not blocked" and returned an empty trigger. Until this is fixed, every downstream result is derived from mangled input.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `tests/test_context_assembler.py`:
+
+```python
+
+
+def test_segments_rejoin_into_the_original_text():
+    """The minimizer reconstructs candidates with "".join, so segments must carry their
+    newline - exactly as LineSegmenter already does. Without it every probe tests text
+    with all lines run together."""
+    from refusal_detector.minimizer import _join_segments
+
+    records = [
+        {"type": "user", "message": {"role": "user", "content": "alpha\nbeta\ngamma"}},
+        {"type": "system", "subtype": "model_refusal_fallback"},
+    ]
+
+    segments = assemble_context(records, refusal_index=1)
+
+    assert _join_segments(segments) == "alpha\nbeta\ngamma"
+
+
+def test_a_subset_rejoins_without_running_lines_together():
+    records = [
+        {"type": "user", "message": {"role": "user", "content": "alpha\nbeta\ngamma"}},
+        {"type": "system", "subtype": "model_refusal_fallback"},
+    ]
+    from refusal_detector.minimizer import _join_segments
+
+    segments = assemble_context(records, refusal_index=1)
+    joined = _join_segments([segments[0], segments[2]])
+
+    assert "alphagamma" not in joined, "dropping a middle line must not fuse its neighbours"
+    assert joined == "alpha\ngamma"
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `python -m pytest tests/test_context_assembler.py -k rejoin -v`
+Expected: both FAIL — currently the join yields `alphabetagamma`.
+
+- [ ] **Step 3: Implement**
+
+In `src/refusal_detector/context.py`, inside `_segment_lines`, the segment is currently constructed with `text=line`. Change it to keep the newline, matching `LineSegmenter`:
+
+```python
+        is_last_line = line_number == len(text.split("\n"))
+        segment_text = line if is_last_line else line + "\n"
+```
+
+and pass `text=segment_text` into `ContextSegment(...)`. Compute `lines = text.split("\n")` once before the loop and iterate over it rather than re-splitting per line.
+
+Leave `start_char`/`end_char`/`start_line`/`end_line` exactly as they are — they already account for the newline in the cursor arithmetic.
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `python -m pytest tests/test_context_assembler.py -v`
+Expected: all pass, including the pre-existing assembler tests. If a pre-existing test asserted `s.text == "line one"`, update it to `"line one\n"` — that is the corrected behaviour, not a weakened test.
+
+- [ ] **Step 5: Falsify**
+
+Revert to `text=line`. Re-run: `test_segments_rejoin_into_the_original_text` must go RED showing `alphabetagamma`. Restore, confirm green. Paste the real output.
+
+- [ ] **Step 6: Full suite**
+
+Run: `python -m pytest -q --ignore=tests/test_context_roundtrip.py`
+Expected: all green.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/refusal_detector/context.py tests/test_context_assembler.py
+git commit -m "fix: keep the newline in context segments so candidates rejoin correctly"
+```
+
+---
+
 ### Task 2: Report saturation instead of implying a fix
 
 **Files:**
