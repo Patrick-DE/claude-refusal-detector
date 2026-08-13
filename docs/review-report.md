@@ -243,3 +243,135 @@ green→red→green by stubbing `_find_structured_refusal` to return `None`.
 **Note on the reported case:** both refusals were on ordinary code-audit requests, classified
 `cyber` — false positives from the model's safeguards, which is the exact scenario this tool
 was built to diagnose.
+
+---
+
+## Round trip against a real captured refusal (2026-08-13) -- Task 9
+
+**Precondition:** `claude auth status` -> `loggedIn: true` (Max subscription), confirmed
+immediately before this run. Baseline suite before this task: 95 passed, 2 skipped.
+
+**Reproduction command:** `python -m pytest tests/test_context_roundtrip.py -v -s`
+
+**Result: inconclusive -- the probe did not complete, so no verdict (blocked=True or
+blocked=False) was ever produced.** This is a third, distinct outcome from the two the
+task anticipated, and it is being recorded exactly as it happened rather than folded into
+either "reproduced" or "not reproduced."
+
+### What ran
+
+`assemble_context(records, 27)` against the captured transcript
+(`196daf17-75ca-4f0b-9190-cc282ff2a2bc.jsonl`, `apiRefusalCategory=cyber`,
+`originalModel=claude-fable-5`) produced **6 segments**, origins `{prompt, prior_turn}`
+only -- matching the known facts exactly. `ContextOracle(segments=segments,
+model="claude-fable-5", timeout=180).test(...)` was called once, as the test specifies.
+
+The call did not return a `Verdict`. It raised, from `SystemPromptCLIAdapter.test_with_system`:
+
+```
+RuntimeError: Claude CLI timed out after 180s
+```
+
+caused by `subprocess.TimeoutExpired` on the underlying `claude -p - --exclude-dynamic-
+system-prompt-sections --model claude-fable-5` call. Total wall time for the single test:
+181.27s. The printed `reproduction verdict: blocked=... reason=...` line the test emits on
+success was **never reached** -- there is no verdict line to report, and none should be
+invented. Reran as part of the full suite (see below): identical failure, identical
+`RuntimeError`, 194.80s total suite time. Two independent runs, same outcome both times.
+
+### Root cause (confirmed, not merely suspected)
+
+The 6 assembled segments join into this exact 654-character prompt:
+
+```
+fable can you please check this project for bugs and issues?
+Then write an audit report with the issue where and suggested fix.
+Dont talk during the analysis and only report once you are done.
+dont only look at syntax bugs but also semantical bugs where the function does not make a
+lot of sense in the implemented way and the intension was propably a slightly different one
+Auditing project for bugs -- will fan out read-only specialist agents across the Rust
+client, Node backend, frontend, and AI layer, then verify top findings myself and write the
+report. Silent until done.
+Let me orient on the actual tree first so agent briefs point at real files.
+```
+
+The last two lines are the assistant's own prior turn: a stated plan to fan out subagents
+and start reading the tree. This is not refusal-shaped content to classify -- it is a
+mid-task coding-agent instruction. `SystemPromptCLIAdapter` invokes plain `claude -p` with
+no `--permission-mode`, no `--disallowedTools`, and no turn cap, so the CLI retains full
+tool access. Replayed through that channel, the CLI does not produce a quick classification;
+it resumes the literal plan in the text.
+
+Confirmed directly, not inferred: a bounded (55s, separately capped) diagnostic replay of
+the identical prompt through `claude -p ... --output-format stream-json --verbose` (from
+this repository's own directory, since the CLI has no way to recover the original
+`unrealengine-debugger` working directory) captured 23 real tool calls in order --
+`Bash("git ls-files && ... ls -la")`, `Bash("wc -l ...")`, and 20 `Read` calls working
+through `src/refusal_detector/*.py`, `hooks/hooks.json`, `.claude-plugin/plugin.json`,
+`.mcp.json`, `pyproject.toml`, even the new `tests/test_context_roundtrip.py` -- with no
+sign of concluding. That diagnostic process was stopped deliberately once the pattern was
+unambiguous (`TaskStop` on the background task); it was not left to find its own end.
+
+This is why 180s -- generous relative to Task 7's measured 19.6-31.3s for a plain "Say OK."
+probe -- was not generous enough here. The two figures are not measuring the same kind of
+work: a short prompt gets a short reply; this prompt gets a real, multi-file, read-only
+audit of whatever directory the CLI happens to be run from.
+
+### Safety check
+
+`git status --porcelain` was clean (only the new test file untracked) both immediately
+after the official test run and after the diagnostic replay was stopped. Every observed
+tool call in the diagnostic was read-only (`git ls-files`, `ls`, `wc -l`, `Read`) --
+consistent with the replayed text's own "read-only specialist agents" framing -- but this
+is circumstantial, not structural: nothing in `SystemPromptCLIAdapter` restricts tool
+access, so a differently-worded mid-task turn could plausibly reach `Write`/`Edit`/`Bash`
+mutation against whatever directory the probe runs from. This round trip happened to be
+read-only in practice; it was not made safe by design.
+
+### Interpretation
+
+Not a reproduction (no `blocked=True`). Not a clean non-reproduction either (no
+`blocked=False` -- the model was never asked a question it could decline; it was handed a
+task and it started doing the task). The honest label is: **the round-trip approach, as
+built, cannot classify this transcript at all**, because the content being replayed is
+itself a tool-use instruction and the oracle channel (`claude -p` with unrestricted tools)
+has no way to distinguish "evaluate this text" from "act on this text." For a tool whose
+primary input is Claude Code transcripts -- where the turn before a refusal is very
+commonly an in-progress agentic task, as it was here -- this is a real scope finding about
+the reconstructable universe, arguably more consequential than a clean blocked=True/False
+would have been: it says the current single-shot replay design does not generalize to the
+common case, not just to the specific unreconstructable base-system-prompt case the design
+doc already flagged.
+
+### Full suite (2026-08-13, post-task)
+
+```
+$ python -m pytest -q -rs
+...................................F.......ss.........................  [ 73%]
+..........................                                              [100%]
+SKIPPED [1] tests/test_integration.py:40: ANTHROPIC_API_KEY environment variable not set
+SKIPPED [1] tests/test_integration.py:53: DEEPSEEK_API_KEY environment variable not set
+1 failed, 95 passed, 2 skipped in 194.80s
+```
+
+The 95 passed / 2 skipped baseline is unchanged and the two skips are the same
+pre-existing, unrelated, API-key-gated tests. The one new failure is
+`test_captured_refusal_reproduces_through_the_context_oracle`, for the reason above. This
+is the first task in this project where the full suite is **not** all-green on an
+authenticated machine -- see the concern below.
+
+### Concern for follow-up (not actioned in this task)
+
+`tests/test_context_roundtrip.py` was created exactly as specified and must not be
+weakened to force a pass. But as written, it now runs for real (not skipped) on any
+authenticated machine with the transcript present, takes roughly three minutes, and ends
+in `FAILED` rather than the pass-or-skip the task expected -- unlike the two
+API-key-gated live tests in `test_integration.py`, which stay skipped by default and so
+never disturb a normal green run. Left as is, every future `pytest -q` on this machine
+will carry that same ~180-195s failing tail. Recommend the next task decide, rather than
+this one silently deciding: either gate this test behind an explicit opt-in (so it stays
+off by default like its siblings), or treat the finding above as a design item for
+`SystemPromptCLIAdapter` (a permission-mode restriction or turn cap so agentic-shaped
+content fails fast with a classifiable verdict instead of running out the clock). Neither
+change was made here -- it was out of this task's scope, which was to run the round trip
+and report what happened, not to redesign the adapter it exercises.
