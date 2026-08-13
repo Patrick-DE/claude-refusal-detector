@@ -91,3 +91,53 @@ def test_resolve_adapter_builds_the_real_system_prompt_adapter():
     assert isinstance(adapter, SystemPromptCLIAdapter)
     assert adapter.model == "claude-fable-5", "model must reach the adapter"
     assert adapter.timeout == 99.0, "timeout must reach the adapter"
+
+
+def test_build_channels_does_not_double_newlines():
+    """Segment text carries its own trailing newline, so channels must concatenate.
+
+    Regression: segments originally had their newline stripped, so build_channels joined
+    on "\n" to put it back. Once segments started carrying it (to match
+    minimizer._join_segments, which uses ""), that join silently doubled every line break
+    and every live probe tested text the caller never assembled.
+    """
+    from refusal_detector.context import ContextSegment, SegmentOrigin
+
+    def _seg(index: int, text: str, origin: SegmentOrigin) -> ContextSegment:
+        return ContextSegment(
+            index=index, text=text, start_char=0, end_char=len(text),
+            start_line=index + 1, end_line=index + 1, origin=origin, source_label=origin.value,
+        )
+
+    subset = [
+        _seg(0, "rule one\n", SegmentOrigin.PROJECT_CLAUDE_MD),
+        _seg(1, "rule two", SegmentOrigin.PROJECT_CLAUDE_MD),
+        _seg(2, "alpha\n", SegmentOrigin.PROMPT),
+        _seg(3, "beta", SegmentOrigin.PROMPT),
+    ]
+
+    system_text, conversation_text = ContextOracle(
+        segments=subset, model="claude-fable-5", adapter=object()
+    ).build_channels(subset)
+
+    assert system_text == "rule one\nrule two"
+    assert conversation_text == "alpha\nbeta"
+    assert "\n\n" not in system_text and "\n\n" not in conversation_text
+
+
+def test_channels_match_what_the_minimizer_would_join():
+    """The oracle must probe exactly the text the minimizer asked about."""
+    from refusal_detector.context import ContextSegment, SegmentOrigin
+    from refusal_detector.minimizer import _join_segments
+
+    subset = [
+        ContextSegment(index=i, text=t, start_char=0, end_char=len(t), start_line=i + 1,
+                       end_line=i + 1, origin=SegmentOrigin.PROMPT, source_label="prompt")
+        for i, t in enumerate(["alpha\n", "beta\n", "gamma"])
+    ]
+
+    _, conversation_text = ContextOracle(
+        segments=subset, model="claude-fable-5", adapter=object()
+    ).build_channels(subset)
+
+    assert conversation_text == _join_segments(subset)

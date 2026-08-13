@@ -42,10 +42,15 @@ class ContextOracle:
         return self._adapter
 
     def build_channels(self, subset: list[ContextSegment]) -> tuple[str, str]:
-        """Split a candidate subset into (system prompt text, conversation text)."""
-        system_lines = [s.text for s in subset if is_pre_prompt(s.origin)]
-        conversation_lines = [s.text for s in subset if not is_pre_prompt(s.origin)]
-        return "\n".join(system_lines), "\n".join(conversation_lines)
+        """Split a candidate subset into (system prompt text, conversation text).
+
+        Concatenated without a separator, matching `minimizer._join_segments`: segment text
+        already carries its own trailing newline. Joining on "\\n" here would double every
+        line break, so the text probed would not be the text under test.
+        """
+        system_text = "".join(s.text for s in subset if is_pre_prompt(s.origin))
+        conversation_text = "".join(s.text for s in subset if not is_pre_prompt(s.origin))
+        return system_text, conversation_text
 
     def _subset_for(self, prompt: str) -> list[ContextSegment]:
         """Recover which segments a joined prompt represents.
