@@ -141,3 +141,48 @@ def test_channels_match_what_the_minimizer_would_join():
     ).build_channels(subset)
 
     assert conversation_text == _join_segments(subset)
+
+
+def test_channels_rebuild_real_assembled_sources_exactly():
+    """Built by the real assembler, not hand-crafted segments.
+
+    The sibling tests construct segments with an explicit "\n", which encodes an assumption
+    about _segment_lines' convention: if the assembler changed, they would stay green while
+    the channels silently drifted. This one asks assemble_context for the segments, so it
+    fails if the producer and consumer ever disagree - and it puts several multi-line
+    sources in the SAME channel, which is where the doubling showed up.
+    """
+    from refusal_detector.context import SegmentOrigin, assemble_context
+
+    project_md = "project rule one\nproject rule two\nproject rule three"
+    global_md = "global rule one\nglobal rule two"
+    prompt = "prompt line one\nprompt line two"
+
+    segments = assemble_context(
+        [
+            {"type": "user", "message": {"role": "user", "content": prompt}},
+            {"type": "system", "subtype": "model_refusal_fallback"},
+        ],
+        refusal_index=1,
+        claude_md_files=[
+            (SegmentOrigin.GLOBAL_CLAUDE_MD, "global CLAUDE.md", global_md),
+            (SegmentOrigin.PROJECT_CLAUDE_MD, "project CLAUDE.md", project_md),
+        ],
+    )
+
+    system_text, conversation_text = ContextOracle(
+        segments=segments, model="claude-fable-5", adapter=object()
+    ).build_channels(segments)
+
+    # Both CLAUDE.md files share the system channel: five lines from two sources.
+    # Asserting against `global_md + project_md` would be wrong - that concatenation
+    # carries the very fusion this checks for ("global rule two" running into
+    # "project rule one"). The sources must be separated.
+    # Both CLAUDE.md sources terminate their last line, because further sources follow them
+    # in the assembled stream (the prompt does, even though it lands in another channel).
+    assert system_text == global_md + "\n" + project_md + "\n"
+    assert "global rule twoproject rule one" not in system_text, "sources fused at the boundary"
+    # The prompt is the final source, so it keeps its exact original ending.
+    assert conversation_text == prompt
+    assert "\n\n" not in system_text, "consecutive sources must not gain a blank line"
+    assert "\n\n" not in conversation_text

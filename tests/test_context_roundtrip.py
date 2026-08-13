@@ -41,6 +41,7 @@ pytestmark = [
 def test_captured_refusal_reproduces_through_the_context_oracle():
     from refusal_detector.context import assemble_context
     from refusal_detector.context_oracle import ContextOracle
+    from refusal_detector.minimizer import _join_segments
 
     records = [json.loads(line) for line in open(TRANSCRIPT, encoding="utf-8") if line.strip()]
     refusal_index = next(
@@ -50,7 +51,10 @@ def test_captured_refusal_reproduces_through_the_context_oracle():
     assert segments, "assembly produced nothing to test"
 
     oracle = ContextOracle(segments=segments, model="claude-fable-5", timeout=180)
-    verdict = oracle.test("\n".join(s.text for s in segments))
+    # Reconstruct exactly the way the minimizer does. Joining on "\n" here would pad the
+    # text differently from every other probe, so this test would replay something the
+    # captured session never contained - defeating the point of reproducing it faithfully.
+    verdict = oracle.test(_join_segments(segments))
 
     # Not asserting blocked=True: the base system prompt is not reconstructable, so a
     # non-reproduction is a real finding about scope, not a test failure to paper over.

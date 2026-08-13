@@ -48,12 +48,19 @@ def _segment_lines(
     origin: SegmentOrigin,
     source_label: str,
     start_index: int,
+    terminate_last_line: bool = False,
 ) -> list[ContextSegment]:
     """Split one source into line segments, skipping blank lines.
 
     Every segment's text keeps its trailing newline, except the last line of the
     source - matching LineSegmenter's convention, so the minimizer's "".join
     reconstructs the original text exactly.
+
+    `terminate_last_line` terminates that final line too, which callers must set when
+    another source follows in the same stream. Without it, concatenation fuses the sources:
+    the last line of one runs straight into the first line of the next
+    ("global rule two" + "project rule one" -> "global rule twoproject rule one"), and the
+    model is asked about a line that exists in neither file.
     """
     segments: list[ContextSegment] = []
     char_cursor = 0
@@ -64,7 +71,8 @@ def _segment_lines(
         line_length = len(line)
         if line.strip():
             is_last_line = line_number == len(lines)
-            segment_text = line if is_last_line else line + "\n"
+            needs_newline = not is_last_line or terminate_last_line
+            segment_text = line + "\n" if needs_newline else line
             segments.append(
                 ContextSegment(
                     index=index,
@@ -126,17 +134,29 @@ def assemble_context(
     Everything at or after `refusal_index` is excluded: it had not been sent when the
     refusal fired, so it cannot be part of what was refused.
     """
-    segments: list[ContextSegment] = []
-
-    for origin, label, content in claude_md_files or []:
-        segments.extend(_segment_lines(content, origin, label, len(segments)))
+    # Collect every source first, so each one knows whether anything follows it. A source
+    # that is not last must terminate its final line, or concatenation fuses it into the
+    # next source and produces a line that exists in neither.
+    sources: list[tuple[SegmentOrigin, str, str]] = list(claude_md_files or [])
 
     for record in records[:refusal_index]:
         extracted = _conversation_text(record)
         if extracted is None:
             continue
         text, origin = extracted
-        label = origin.value
-        segments.extend(_segment_lines(text, origin, label, len(segments)))
+        sources.append((origin, origin.value, text))
+
+    segments: list[ContextSegment] = []
+    for position, (origin, label, content) in enumerate(sources):
+        is_last_source = position == len(sources) - 1
+        segments.extend(
+            _segment_lines(
+                content,
+                origin,
+                label,
+                len(segments),
+                terminate_last_line=not is_last_source,
+            )
+        )
 
     return segments
