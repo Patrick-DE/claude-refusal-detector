@@ -49,18 +49,26 @@ def _segment_lines(
     source_label: str,
     start_index: int,
 ) -> list[ContextSegment]:
-    """Split one source into line segments, skipping blank lines."""
+    """Split one source into line segments, skipping blank lines.
+
+    Every segment's text keeps its trailing newline, except the last line of the
+    source - matching LineSegmenter's convention, so the minimizer's "".join
+    reconstructs the original text exactly.
+    """
     segments: list[ContextSegment] = []
     char_cursor = 0
     index = start_index
+    lines = text.split("\n")
 
-    for line_number, line in enumerate(text.split("\n"), start=1):
+    for line_number, line in enumerate(lines, start=1):
         line_length = len(line)
         if line.strip():
+            is_last_line = line_number == len(lines)
+            segment_text = line if is_last_line else line + "\n"
             segments.append(
                 ContextSegment(
                     index=index,
-                    text=line,
+                    text=segment_text,
                     start_char=char_cursor,
                     end_char=char_cursor + line_length,
                     start_line=line_number,

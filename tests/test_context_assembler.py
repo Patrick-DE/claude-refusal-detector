@@ -115,7 +115,7 @@ def test_claude_md_segments_come_first_and_are_tagged():
 
     assert segments[0].origin is SegmentOrigin.PROJECT_CLAUDE_MD
     assert segments[0].source_label == "project CLAUDE.md"
-    assert segments[0].text == "line one"
+    assert segments[0].text == "line one\n"
     assert any(s.origin is SegmentOrigin.PROMPT for s in segments)
 
 
@@ -134,3 +134,33 @@ def test_empty_lines_are_not_emitted_as_segments():
     segments = assemble_context(records, refusal_index=1)
 
     assert all(s.text.strip() for s in segments)
+
+
+def test_segments_rejoin_into_the_original_text():
+    """The minimizer reconstructs candidates with "".join, so segments must carry their
+    newline - exactly as LineSegmenter already does. Without it every probe tests text
+    with all lines run together."""
+    from refusal_detector.minimizer import _join_segments
+
+    records = [
+        {"type": "user", "message": {"role": "user", "content": "alpha\nbeta\ngamma"}},
+        {"type": "system", "subtype": "model_refusal_fallback"},
+    ]
+
+    segments = assemble_context(records, refusal_index=1)
+
+    assert _join_segments(segments) == "alpha\nbeta\ngamma"
+
+
+def test_a_subset_rejoins_without_running_lines_together():
+    records = [
+        {"type": "user", "message": {"role": "user", "content": "alpha\nbeta\ngamma"}},
+        {"type": "system", "subtype": "model_refusal_fallback"},
+    ]
+    from refusal_detector.minimizer import _join_segments
+
+    segments = assemble_context(records, refusal_index=1)
+    joined = _join_segments([segments[0], segments[2]])
+
+    assert "alphagamma" not in joined, "dropping a middle line must not fuse its neighbours"
+    assert joined == "alpha\ngamma"
