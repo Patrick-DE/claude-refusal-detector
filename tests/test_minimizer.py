@@ -121,8 +121,11 @@ def test_mutation_check_fake_oracle_failure():
 
     broken = BrokenMinimizer(oracle)
     broken_trg, _ = broken.minimize(segments)
-    # The broken implementation fails to isolate the trigger (Red condition verified)
-    assert len(broken_trg) != len(trg)
+    # The broken implementation fails to isolate the trigger (Red condition verified).
+    # Content, not length: Minimizer.minimize's saturation guard now falls back to a
+    # non-empty candidate when a pass returns nothing, so a length check alone would no
+    # longer distinguish "isolated the real trigger" from "fell back to segment zero".
+    assert broken_trg != trg, "broken minimizer must not accidentally match the correct trigger"
 
 
 def test_mutation_cycle_full_green_red_green(monkeypatch):

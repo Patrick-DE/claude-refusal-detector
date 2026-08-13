@@ -30,6 +30,7 @@ class Minimizer:
         returns ([], Verdict(blocked=False)).
         """
         if not segments:
+            logger.info("Nothing to minimize: empty segment list.")
             return [], Verdict(blocked=False, reason_class=ReasonClass.NOT_BLOCKED)
 
         full_prompt = _join_segments(segments)
@@ -52,6 +53,16 @@ class Minimizer:
         current_segments, last_blocked_verdict = self._ddmin_pass(current_segments, last_blocked_verdict)
         logger.info("ddmin completed. Minimal trigger set contains %d segments.", len(current_segments))
 
+        if not current_segments:
+            # A blocked input that minimizes to nothing means every subset still looked
+            # blocked - saturated content, not an empty cause. Returning [] would make a
+            # caller's remaining-set never shrink, and an empty candidate cannot even be
+            # probed (the Messages API rejects it with HTTP 400).
+            logger.warning(
+                "Minimization reduced to zero segments; content appears saturated. "
+                "Returning the smallest non-empty candidate instead."
+            )
+            current_segments = segments[:1]
         return current_segments, last_blocked_verdict
 
     def _coarse_pass(
